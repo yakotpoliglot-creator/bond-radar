@@ -244,6 +244,13 @@ async function main() {
     } catch { /* прошлый файл битый — не мешаем перезаписи */ }
   }
 
+  /* Сортируем ключи по ИНН. Это важно: порядок обхода эмитентов у биржи
+     может меняться от прогона к прогону, и тогда весь файл выглядел бы
+     изменённым, хотя данные те же — робот коммитил бы каждую неделю
+     гигантский бесполезный diff. С сортировкой результат детерминирован. */
+  const sorted = {};
+  for (const inn of Object.keys(result).sort()) sorted[inn] = result[inn];
+
   const payload = {
     generatedAt: new Date().toISOString(),
     source: 'ГИР БО ФНС России (bo.nalog.gov.ru), ФЗ № 402-ФЗ ст. 18',
@@ -251,7 +258,7 @@ async function main() {
     standard: 'РСБУ — российские стандарты бухгалтерского учёта, отчётность самого '
       + 'юридического лица (эмитента), а не консолидированная отчётность группы по МСФО.',
     stats: { emitters: byInn.size, found, withYears, closed, notFound, failed },
-    organizations: result,
+    organizations: sorted,
   };
 
   /* Пишем компактно: файл читает браузер, лишние пробелы ни к чему. */
