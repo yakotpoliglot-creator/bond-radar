@@ -387,19 +387,21 @@ table.tbl tbody tr { cursor: pointer; }
   text-overflow: ellipsis;
 }
 
-/* Затемнение под выдвинутым меню. На десктопе не показывается никогда. */
+/* Затемнение под выдвинутым меню. Объявлено только внутри мобильного
+   медиазапроса — на десктопе затемнение не должно появляться никогда,
+   даже если меню осталось открытым после поворота экрана. */
 .backdrop { display: none; }
-.backdrop.show {
-  display: block;
-  position: fixed;
-  inset: 0;
-  z-index: 99;
-  background: rgba(0, 0, 0, .45);
-}
 
 /* ═══════════════════════ Адаптив ═══════════════════════ */
 @media (max-width: 900px) {
   .topbar { display: flex; }
+  .backdrop.show {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    background: rgba(0, 0, 0, .45);
+  }
   .side {
     transform: translateX(-100%);
     box-shadow: none;
