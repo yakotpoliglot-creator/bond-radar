@@ -13,6 +13,7 @@ import Stocks from './pages/Stocks';
 import Portfolio from './pages/Portfolio';
 import Favorites from './pages/Favorites';
 import CalendarPage from './pages/Calendar';
+import Placements from './pages/Placements';
 
 export default function App() {
   const [theme, setTheme] = useTheme();
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/calendar" element={<CalendarPage />} />
+          <Route path="/placements" element={<Placements />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

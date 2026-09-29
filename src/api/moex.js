@@ -296,6 +296,79 @@ export function bondsOfIssuer(all, key) {
   return all.filter(b => b.issuerKey === key);
 }
 
+/* ── реестр эмитентов MOEX ───────────────────────────────────────── *
+ * /iss/emitters/{id} — официальный реестр: ОГРН, адреса, сайт,
+ * капитализация. Рейтингов там НЕТ (14 полей, ни одного рейтингового) —
+ * поэтому рейтинги на сайте честно помечены как отсутствующие.
+ */
+
+/** Поле URL в реестре приходит грязным («https://site.ru/ - ; - ;») — вычищаем. */
+function firstUrl(s) {
+  if (!s) return null;
+  const m = String(s).match(/https?:\/\/[^\s;,]+/);
+  return m ? m[0].replace(/[).,;]+$/, '') : null;
+}
+
+/** Полная карточка эмитента из реестра MOEX (1 запрос). */
+export async function fetchEmitter(emitterId) {
+  if (emitterId == null || emitterId === '') return null;
+  try {
+    const d = await iss(`/emitters/${emitterId}.json`);
+    const e = (d.emitter || [])[0];
+    if (!e) return null;
+    const num = v => (v == null || v === '' ? null : +v);
+    return {
+      id: e.EMITTER_ID,
+      title: e.TITLE,
+      shortTitle: e.SHORT_TITLE,
+      inn: e.INN,
+      ogrn: e.OGRN,
+      okpo: e.OKPO,
+      country: e.OKSM,
+      legalAddress: e.LEGAL_ADDRESS,
+      postalAddress: e.POSTAL_ADDRESS,
+      website: firstUrl(e.URL),
+      // CAPITALIZATION — весь холдинг, EMITTER_CAPITALIZATION — само юрлицо
+      capitalization: num(e.CAPITALIZATION),
+      emitterCapitalization: num(e.EMITTER_CAPITALIZATION),
+      capitalizationUpdatedAt: e.EMITTER_CAPITALIZATION_UPDATETIME,
+    };
+  } catch { return null; }
+}
+
+/** Официальная отчётность эмитента на сайте MOEX (без парсинга — просто ссылка). */
+export function moexReportsUrl(emitterId) {
+  return emitterId == null || emitterId === ''
+    ? null
+    : `https://www.moex.com/ru/listing/emidocs.aspx?id=${emitterId}`;
+}
+
+/** Карточка выпуска на сайте MOEX. */
+export function moexIssueUrl(secidOrIsin, board) {
+  if (!secidOrIsin) return null;
+  const b = board || 'TQCB';
+  return `https://www.moex.com/ru/issue.aspx?board=${b}&code=${secidOrIsin}`;
+}
+
+/* ── анонсы первичных размещений ─────────────────────────────────── *
+ * MOEX не публикует книгу заявок и ориентир купона в машиночитаемом
+ * виде. Доступны только новостные анонсы «О порядке сбора заявок…».
+ * Отдаём ровно их и честно называем анонсами, а не базой размещений.
+ */
+export async function fetchPlacementNews() {
+  const d = await iss('/sitenews.json');
+  const rows = d.sitenews || [];
+  return rows
+    .filter(n => /размещ|сбор заявок/i.test(n.title || ''))
+    .map(n => ({
+      id: n.id,
+      title: (n.title || '').replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim(),
+      publishedAt: n.published_at,
+      tag: n.tag,
+      url: `https://www.moex.com/n${n.id}/?nt=101`,
+    }));
+}
+
 /* ── кривая доходности ОФЗ ───────────────────────────────────────── */
 export async function fetchYieldCurve() {
   const d = await iss('/engines/stock/zcyc.json');

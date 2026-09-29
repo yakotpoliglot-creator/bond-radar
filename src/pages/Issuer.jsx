@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { fetchBonds, fetchIssuerInfo, bondsOfIssuer, COUPON_LABEL } from '../api/moex';
+import { fetchBonds, fetchIssuerInfo, fetchEmitter, bondsOfIssuer, COUPON_LABEL, moexReportsUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox } from '../components/ui';
 import { nf, money, dateShort } from '../lib/format';
 
@@ -15,6 +15,7 @@ export default function Issuer() {
 
   const [all, setAll] = useState([]);
   const [info, setInfo] = useState(null);
+  const [emitter, setEmitter] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [kind, setKind] = useState('all'); // фильтр по типу купона
@@ -47,6 +48,15 @@ export default function Issuer() {
     fetchIssuerInfo(first.isin).then(r => { if (alive) setInfo(r); }).catch(() => {});
     return () => { alive = false; };
   }, [first?.isin]);
+
+  /* ── официальный реестр MOEX: ОГРН, адреса, сайт, капитализация ── */
+  useEffect(() => {
+    let alive = true;
+    setEmitter(null);
+    if (info?.id == null) return;
+    fetchEmitter(info.id).then(r => { if (alive) setEmitter(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [info?.id]);
 
   /* ── доступные типы купона для фильтра ─────────────────────────── */
   const kinds = useMemo(() => {
@@ -146,6 +156,70 @@ export default function Issuer() {
       <Panel title="Выпуски эмитента" pad={false}
         right={<span className="c-3" style={{ fontSize: 11 }}>сортировка по умолчанию — погашение</span>}>
         <BondTable bonds={filtered} initialSort="mat" />
+      </Panel>
+
+      {/* ── Официальные данные эмитента (реестр MOEX) ─────────────── */}
+      <Panel title="Данные об эмитенте" style={{ marginTop: 14 }}>
+        <table className="tbl" style={{ width: '100%' }}>
+          <tbody>
+            <tr>
+              <td className="c-3" style={{ width: 190 }}>Полное наименование</td>
+              <td>{emitter?.title || info?.title || '—'}</td>
+            </tr>
+            <tr>
+              <td className="c-3">ИНН</td>
+              <td className="mono">{emitter?.inn || info?.inn || '—'}</td>
+            </tr>
+            <tr>
+              <td className="c-3">ОГРН</td>
+              <td className="mono">{emitter?.ogrn || '—'}</td>
+            </tr>
+            <tr>
+              <td className="c-3">Юридический адрес</td>
+              <td>{emitter?.legalAddress || '—'}</td>
+            </tr>
+            <tr>
+              <td className="c-3">Почтовый адрес</td>
+              <td>{emitter?.postalAddress || '—'}</td>
+            </tr>
+            <tr>
+              <td className="c-3">Сайт</td>
+              <td>
+                {emitter?.website
+                  ? <a href={emitter.website} target="_blank" rel="noopener noreferrer">{emitter.website}</a>
+                  : '—'}
+              </td>
+            </tr>
+            <tr>
+              <td className="c-3">Капитализация эмитента</td>
+              <td>
+                {emitter?.emitterCapitalization != null ? money(emitter.emitterCapitalization) : '—'}
+                {emitter?.capitalization != null && emitter.capitalization !== emitter.emitterCapitalization
+                  ? <span className="c-3" style={{ marginLeft: 8, fontSize: 11 }}>группа компаний: {money(emitter.capitalization)}</span>
+                  : null}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7, marginTop: 12 }}>
+          Источник — реестр эмитентов Московской биржи (<span className="mono">iss.moex.com/iss/emitters</span>).
+          {' '}
+          <b>Кредитного рейтинга и финансовой отчётности здесь нет</b> — MOEX их в открытом API не отдаёт:
+          в реестре 14 полей, ни одного рейтингового. Отчётность можно посмотреть на сайте биржи по ссылке ниже.
+          {emitter?.capitalizationUpdatedAt
+            ? <span className="c-3"> Капитализация обновлена {String(emitter.capitalizationUpdatedAt).slice(0, 16)}.</span>
+            : null}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          {moexReportsUrl(info?.id)
+            ? <a className="btn btn-sm" href={moexReportsUrl(info.id)} target="_blank" rel="noopener noreferrer">
+                Отчётность эмитента на MOEX ↗
+              </a>
+            : null}
+          <Link className="btn btn-sm" to={`/issuer/${key}`} onClick={() => window.scrollTo(0, 0)}>↑ Наверх</Link>
+        </div>
       </Panel>
     </div>
   );

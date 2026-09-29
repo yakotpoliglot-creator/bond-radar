@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
-import { fetchBonds, fetchBondCard, fetchIssuerInfo } from '../api/moex';
+import { fetchBonds, fetchBondCard, fetchIssuerInfo, moexReportsUrl, moexIssueUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag } from '../components/ui';
 import { nf, money, date, dateShort, duration, timeLeft, ytmClass } from '../lib/format';
 import { useFavorites } from '../lib/store';
@@ -225,6 +225,7 @@ export default function BondCard() {
   const shortname = bond?.shortname || card?.shortname || id;
   const fullname = bond?.name || card?.issueName || card?.description?.NAME || shortname;
   const isin = bond?.isin || card?.description?.ISIN || id;
+  const secid = bond?.secid || card?.secid || id;
   const typeName = card?.typename || bond?.bondType || bond?.bondSubtype || null;
   const matDate = bond?.matDate || (card?.description?.MATDATE !== '0000-00-00' ? card?.description?.MATDATE : null);
   const offerDate = bond?.offerDate || (card?.description?.OFFERDATE !== '0000-00-00' ? card?.description?.OFFERDATE : null);
@@ -263,6 +264,18 @@ export default function BondCard() {
             </button>
             {bond?.issuerKey && (
               <Link className="btn" to={'/issuer/' + bond.issuerKey}>Все выпуски эмитента →</Link>
+            )}
+            {moexReportsUrl(card?.issuerId) && (
+              <a className="btn" href={moexReportsUrl(card.issuerId)} target="_blank" rel="noopener noreferrer"
+                title="Официальная отчётность эмитента на сайте Московской биржи">
+                Отчётность эмитента ↗
+              </a>
+            )}
+            {moexIssueUrl(secid, bond?.board) && (
+              <a className="btn" href={moexIssueUrl(secid, bond?.board)} target="_blank" rel="noopener noreferrer"
+                title="Карточка выпуска на сайте Московской биржи">
+                На MOEX ↗
+              </a>
             )}
           </div>
         </div>

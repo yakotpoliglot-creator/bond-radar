@@ -11,6 +11,7 @@ const SECTIONS = [
       { to: '/issuers', icon: '▣', label: 'Эмитенты' },
       { to: '/stocks', icon: '◈', label: 'Акции Мосбиржи' },
       { to: '/calendar', icon: '▤', label: 'Календарь событий' },
+      { to: '/placements', icon: '◈', label: 'Размещения' },
     ],
   },
   {
