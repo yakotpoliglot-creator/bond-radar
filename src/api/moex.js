@@ -336,33 +336,47 @@ function defaultFrom(daysAgo) {
 }
 
 /* ── акции ───────────────────────────────────────────────────────── */
-export async function fetchStocks() {
+/**
+ * Акции основного режима TQBR.
+ * SECTYPE: '1' — обыкновенные, '2' — привилегированные.
+ * Остальные значения на этой площадке — ETF/БПИФ ('J'), депозитарные
+ * расписки ('9', 'B', 'A') и прочее; они в раздел «Акции» не попадают.
+ */
+const SHARE_TYPES = new Set(['1', '2']);
+
+export async function fetchStocks({ includeFunds = false } = {}) {
   const d = await iss('/engines/stock/markets/shares/boards/TQBR/securities.json');
   const S = d.securities || [];
   const M = new Map((d.marketdata || []).map(r => [r.SECID, r]));
-  return S.map(s => {
-    const m = M.get(s.SECID);
-    const price = lastNum(m?.LAST, m?.LCLOSEPRICE, m?.MARKETPRICE, s.PREVPRICE);
-    return {
-      secid: s.SECID,
-      isin: s.ISIN,
-      shortname: s.SHORTNAME,
-      name: s.SECNAME || s.SHORTNAME,
-      latname: s.LATNAME,
-      price,
-      change: m?.LASTCHANGEPRCNT != null ? +m.LASTCHANGEPRCNT : null,
-      lastChange: m?.LASTCHANGE != null ? +m.LASTCHANGE : null,
-      open: m?.OPEN != null ? +m.OPEN : null,
-      low: m?.LOW != null ? +m.LOW : null,
-      high: m?.HIGH != null ? +m.HIGH : null,
-      turnover: m?.VALTODAY != null ? +m.VALTODAY : 0,
-      numTrades: m?.NUMTRADES != null ? +m.NUMTRADES : null,
-      issuesize: s.ISSUESIZE != null ? +s.ISSUESIZE : null,
-      listLevel: s.LISTLEVEL != null ? +s.LISTLEVEL : null,
-      issueSize: s.ISSUESIZE != null ? +s.ISSUESIZE : null,
-      capitalization: (s.ISSUESIZE != null && price != null) ? +s.ISSUESIZE * price : null,
-    };
-  }).filter(s => s.price != null);
+  return S
+    .filter(s => includeFunds || SHARE_TYPES.has(s.SECTYPE))
+    .map(s => {
+      const m = M.get(s.SECID);
+      const price = lastNum(m?.LAST, m?.LCLOSEPRICE, m?.MARKETPRICE, s.PREVPRICE);
+      return {
+        secid: s.SECID,
+        isin: s.ISIN,
+        shortname: s.SHORTNAME,
+        name: s.SECNAME || s.SHORTNAME,
+        latname: s.LATNAME,
+        secType: s.SECTYPE,
+        isPreferred: s.SECTYPE === '2',
+        price,
+        change: m?.LASTCHANGEPRCNT != null ? +m.LASTCHANGEPRCNT : null,
+        lastChange: m?.LASTCHANGE != null ? +m.LASTCHANGE : null,
+        open: m?.OPEN != null ? +m.OPEN : null,
+        low: m?.LOW != null ? +m.LOW : null,
+        high: m?.HIGH != null ? +m.HIGH : null,
+        turnover: m?.VALTODAY != null ? +m.VALTODAY : 0,
+        numTrades: m?.NUMTRADES != null ? +m.NUMTRADES : null,
+        issuesize: s.ISSUESIZE != null ? +s.ISSUESIZE : null,
+        listLevel: s.LISTLEVEL != null ? +s.LISTLEVEL : null,
+        // Оценка капитализации: число бумаг в выпуске × цена. Для бумаг,
+        // где биржа не раскрывает полный ISSUESIZE, значение приблизительное.
+        capitalization: (s.ISSUESIZE != null && price != null) ? +s.ISSUESIZE * price : null,
+      };
+    })
+    .filter(s => s.price != null);
 }
 
 /* ── ставка ЦБ (история известных решений) ───────────────────────── */

@@ -131,7 +131,7 @@ export default function StocksPage() {
       <div className="page-h">
         <div className="page-t">◈ Акции Мосбиржи</div>
         <div className="page-s">
-          Основной режим TQBR · {nf(stocks.length, 0)} бумаг с ценой · источник — ISS MOEX
+          Основной режим TQBR · {nf(stocks.length, 0)} акций с ценой (обыкновенные и привилегированные) · источник — ISS MOEX
         </div>
       </div>
 
