@@ -115,6 +115,7 @@ const COLS = {
        показала бы 0,46 % вместо 46,22 %. В таблицы она не выводилась,
        поэтому ошибка не проявлялась. */
     label: 'Z-спред', sort: b => b.zSpread ?? -999,
+    hint: 'Премия к безрисковой кривой ОФЗ, в процентных пунктах: сколько бумага платит сверх государственной с той же дюрацией. У ОФЗ около нуля, у корпоратов тем больше, чем выше риск. Считает сама биржа; показываем только там, где её доходность достоверна — примерно у половины выпусков.',
     cell: b => (b.zSpread == null
       ? <span className="c-3">—</span>
       : <span className={'mono ' + (b.zSpread > 5 ? 'c-r' : b.zSpread > 0 ? 'c-g' : 'c-3')}>{nf(b.zSpread, 2)}%</span>),
@@ -159,7 +160,12 @@ export function BondTable({ bonds, cols = DEFAULT_COLS, limit, linkTo = true, in
         <thead>
           <tr>
             {cols.map(k => (
-              <th key={k} className={COLS[k]?.nosort ? 'nosort' : ''} onClick={() => click(k)}>
+              <th
+                key={k}
+                className={COLS[k]?.nosort ? 'nosort' : ''}
+                onClick={() => click(k)}
+                title={COLS[k]?.hint}
+              >
                 {COLS[k]?.label || k}
                 {sortKey === k && (asc ? ' ↑' : ' ↓')}
               </th>
