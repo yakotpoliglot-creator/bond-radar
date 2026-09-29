@@ -150,9 +150,11 @@ function groupOf(b) {
   return 'corp';
 }
 
-/* Индекс корпоративных облигаций: RUCBTR, при пустом ответе — MICEXCBITR. */
+/* Индекс корпоративных облигаций.
+   В истории MOEX доступны суффиксные версии: RUCBCPNS (ценовой, аналог RGBI)
+   и RUCBTRNS (полной доходности). Базовые RUCBTR/RUCBITR историю не отдают. */
 async function loadCorpIndex() {
-  for (const secid of ['RUCBTR', 'MICEXCBITR']) {
+  for (const secid of ['RUCBCPNS', 'RUCBTRNS']) {
     const rows = await fetchIndexHistory(secid).catch(() => null);
     if (rows && rows.length) return { secid, rows };
   }

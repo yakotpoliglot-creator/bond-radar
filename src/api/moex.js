@@ -239,13 +239,17 @@ export async function fetchBondCard(secidOrIsin) {
     valuePrc: a.valueprc != null ? +a.valueprc : null,
     source: a.data_source,
   }));
-  const offers = (bondization.offers || []).map(o => ({
-    date: o.offerdate,
-    start: o.offerdatestart,
-    end: o.offerdateend,
-    price: o.price != null ? +o.price : null,
-    type: o.offertype,
-  }));
+  // MOEX отдаёт «пустую» оферту с датой 0000-00-00 (техническая запись «Оферта/Погашение») — отбрасываем
+  const validDate = d => !!d && d !== '0000-00-00';
+  const offers = (bondization.offers || [])
+    .filter(o => validDate(o.offerdate) || validDate(o.offerdatestart))
+    .map(o => ({
+      date: validDate(o.offerdate) ? o.offerdate : o.offerdatestart,
+      start: o.offerdatestart,
+      end: o.offerdateend,
+      price: o.price != null ? +o.price : null,
+      type: o.offertype,
+    }));
 
   return {
     secid: id,
