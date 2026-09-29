@@ -195,19 +195,44 @@ function RatesNow({ rates, curve, bonds }) {
   );
 }
 
-/* ── Таблица «топ выпусков по доходности» ─────────────────────────── */
+/* ── Таблица «топ выпусков по доходности» ─────────────────────────── *
+ * Доходность к погашению перестаёт быть сопоставимой в двух случаях:
+ *   1) бумага торгуется глубоко ниже номинала — рынок закладывает дефолт,
+ *      и «доходность» превращается в ставку на выживание эмитента;
+ *   2) до погашения остались считаные недели — годовая доходность
+ *      скачет от любого движения цены (выпуск с 1 месяцем и ценой 88 %
+ *      даёт «257 %», что бессмысленно сравнивать с остальными).
+ * Поэтому в рейтингах оставляем цену не ниже половины номинала и срок
+ * от трёх месяцев. Правило показано в шапке таблицы, а не спрятано.
+ */
+const MIN_PRICE = 50;
+const MIN_DAYS = 90;
+
 function TopByYtm({ title, bonds, empty, note, limit = 5 }) {
-  const rows = useMemo(() => {
+  /* Бумаги, чья доходность вообще сопоставима с остальными */
+  const eligible = useMemo(() => {
     if (!bonds?.length) return [];
-    return [...bonds]
-      .filter(b => b.ytm != null)
-      .sort((a, b) => b.ytm - a.ytm)
-      .slice(0, limit);
-  }, [bonds, limit]);
+    return bonds.filter(b => b.ytm != null
+      && b.price != null && b.price >= MIN_PRICE
+      && daysUntil(b.matDate) >= MIN_DAYS);
+  }, [bonds]);
+
+  const rows = useMemo(
+    () => [...eligible].sort((a, b) => b.ytm - a.ytm).slice(0, limit),
+    [eligible, limit],
+  );
+
+  /* Сколько выпусков с доходностью отсеяли как несопоставимые */
+  const skipped = useMemo(
+    () => (bonds || []).filter(b => b.ytm != null).length - eligible.length,
+    [bonds, eligible],
+  );
 
   return (
     <Panel title={title} pad={false}
-      right={note ? <span className="c-3" style={{ fontSize: 11 }}>{note}</span> : null}>
+      right={<span className="c-3" style={{ fontSize: 11 }}>
+        {note}{skipped > 0 ? ` · отсеяно ${skipped}` : ''}
+      </span>}>
       {!rows.length ? (
         <div className="empty" style={{ padding: '14px' }}>{empty}</div>
       ) : (
@@ -229,7 +254,7 @@ function TopByYtm({ title, bonds, empty, note, limit = 5 }) {
                     <td>
                       <div style={{ fontWeight: 600 }}>{b.shortname}</div>
                       <div className="c-3" style={{ fontSize: 10.5 }}>
-                        {termLabel(daysUntil(b.matDate))} · цена {b.price == null ? '—' : nf(b.price, 1) + '%'}
+                        {termLabel(daysUntil(b.matDate))} · цена {nf(b.price, 1)}%
                       </div>
                     </td>
                     <td className="mono">{b.couponPercent == null ? '—' : nf(b.couponPercent, 2) + '%'}</td>
