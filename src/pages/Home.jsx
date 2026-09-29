@@ -4,10 +4,12 @@ import {
   fetchBonds,
   fetchYieldCurve,
   fetchIndexHistory,
+  fetchIndexValues,
   KEY_RATE,
   KEY_RATE_HISTORY,
 } from '../api/moex';
 import { Kpi, Panel, Loading, ErrorBox, BondTable } from '../components/ui';
+import { IndexCard, RatesNow, TopByYtm } from '../components/market';
 import { nf, dateShort, chgStr, chgClass } from '../lib/format';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -170,6 +172,7 @@ export default function Home() {
   const [curve, setCurve] = useState(null);
   const [rgbi, setRgbi] = useState(null);
   const [corp, setCorp] = useState(null);
+  const [rates, setRates] = useState(null);
   const [group, setGroup] = useState('all');
 
   const curveCanvas = useRef(null);
@@ -181,17 +184,19 @@ export default function Home() {
     setLoading(true);
     setFatal(null);
 
-    const [c, r, ci, b] = await Promise.all([
+    const [c, r, ci, b, rt] = await Promise.all([
       fetchYieldCurve().catch(() => null),
       fetchIndexHistory('RGBI').catch(() => null),
       loadCorpIndex().catch(() => null),
       fetchBonds().catch(() => null),
+      fetchIndexValues().catch(() => null),
     ]);
 
     setCurve(c && c.length ? c : null);
     setRgbi(r && r.length ? r : null);
     setCorp(ci);
     setBonds(b && b.length ? b : null);
+    setRates(rt);
 
     // Фатально, только если не пришло вообще ничего — иначе показываем
     // рабочие блоки, а упавшие панели помечаем как недоступные.
@@ -426,6 +431,28 @@ export default function Home() {
     return () => chart.destroy();
   }, [scatterPoints, group, theme]);
 
+  /* ── Группы для таблиц «топ по доходности» ─────────────────────── *
+   * Регионы отличаем по формату регистрационного номера (RU + 5 цифр
+   * + 3 буквы + 1 цифра) — это не эвристика по названию, а строгий
+   * государственный формат. Корпораты — всё остальное, что не ОФЗ.
+   */
+  const govBonds = useMemo(
+    () => (bonds || []).filter(b => b.isOfz || b.isSubfederal),
+    [bonds],
+  );
+  const corpBonds = useMemo(
+    () => (bonds || []).filter(b => !b.isOfz && !b.isSubfederal),
+    [bonds],
+  );
+  const fixBonds = useMemo(
+    () => corpBonds.filter(b => b.couponKind === 'fix'),
+    [corpBonds],
+  );
+  const floatBonds = useMemo(
+    () => corpBonds.filter(b => b.couponKind === 'float'),
+    [corpBonds],
+  );
+
   /* ── Состояния загрузки/ошибки ──────────────────────────────────── */
   if (loading) {
     return (
@@ -462,6 +489,14 @@ export default function Home() {
     display: 'grid',
     gap: 12,
     gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+    marginBottom: 12,
+  };
+
+  /* ── Три группы для таблиц «топ по доходности» ─────────────────── */
+  const tableGrid = {
+    display: 'grid',
+    gap: 12,
+    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
     marginBottom: 12,
   };
 
@@ -528,7 +563,39 @@ export default function Home() {
         </Panel>
       </div>
 
-      {/* ── 4. Карта рынка ────────────────────────────────────────── */}
+      {/* ── 4. Где сейчас доходность + индекс корпоратов ──────────── */}
+      <div style={chartGrid}>
+        <RatesNow rates={rates} curve={curve} bonds={bonds} />
+        <IndexCard
+          secid="RUCBCPNS"
+          title="Индекс корпоративных облигаций"
+          note="MOEX · полная доходность"
+        />
+      </div>
+
+      {/* ── 5. Топ выпусков: ОФЗ и регионы, корпораты ─────────────── */}
+      <div style={tableGrid}>
+        <TopByYtm
+          title="Гособлигации: ОФЗ и регионы"
+          bonds={govBonds}
+          note="топ по доходности"
+          empty="Гособлигации не найдены"
+        />
+        <TopByYtm
+          title="Корпораты · фикс"
+          bonds={fixBonds}
+          note="топ по доходности"
+          empty="Нет выпусков с фиксированным купоном"
+        />
+        <TopByYtm
+          title="Корпораты · флоатеры"
+          bonds={floatBonds}
+          note="топ по доходности"
+          empty="Нет выпусков с плавающим купоном"
+        />
+      </div>
+
+      {/* ── 6. Карта рынка ────────────────────────────────────────── */}
       <Panel
         title="Карта рынка: доходность × срок"
         style={{ marginBottom: 12 }}

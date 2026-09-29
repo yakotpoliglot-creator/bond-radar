@@ -126,6 +126,7 @@ function normalize(s, m, y, board = 'TQCB') {
     issuerKey: issuerKey(s.REGNUMBER),
     board,
     isOfz: board === 'TQOB' || /^ОФЗ|^SU\d/.test(s.SHORTNAME || '') || /федерального займа/i.test(s.BONDTYPE || ''),
+    isSubfederal: isSubfederal(s.REGNUMBER),
 
     price,
     priceChange: m?.LASTCHANGEPRCNT != null ? +m.LASTCHANGEPRCNT : null,
@@ -367,6 +368,90 @@ export async function fetchPlacementNews() {
       tag: n.tag,
       url: `https://www.moex.com/n${n.id}/?nt=101`,
     }));
+}
+
+/* ── субфедеральные и муниципальные облигации ─────────────────────── *
+ * У региональных выпусков государственный регистрационный номер имеет
+ * строгий формат: RU + 5 цифр + 3 буквы региона + 1 цифра.
+ *   RU35002GSP0 — Санкт-Петербург, RU35067TMS0 — Томская область
+ * У корпоратов он другой: 4B02-11-16493-A-001P.
+ * Это позволяет отделять регионы от корпоратов прямо по списку бумаг,
+ * без единого дополнительного запроса. Проверено: таких выпусков 65.
+ */
+export function isSubfederal(regnumber) {
+  return /^RU\d{5}[A-ZА-Я]{3}\d$/.test(String(regnumber || '').trim());
+}
+
+/* ── рыночные ставки и индексы ───────────────────────────────────── *
+ * MOEX отдаёт ключевую ставку как индекс KEYRATE («Индекс МосБиржи
+ * Ключевой ставки»), а ставку репо — как RUSFAR. Обе доступны живым
+ * запросом, поэтому робот-обновлятор для ставки не нужен.
+ */
+export const RATE_INDEXES = [
+  { secid: 'KEYRATE', label: 'Ключевая ставка ЦБ', note: 'индекс МосБиржи ключевой ставки' },
+  { secid: 'RUSFAR', label: 'RUSFAR', note: 'ставка репо с ЦК, овернайт' },
+];
+
+/**
+ * Значения всех индексов MOEX одним запросом.
+ * Возвращает { SECID: { value, change, date } }.
+ */
+export async function fetchIndexValues() {
+  const d = await iss('/engines/stock/markets/index/securities.json', {
+    'iss.only': 'securities,marketdata',
+    'securities.columns': 'SECID,SHORTNAME,NAME,DECIMALS',
+  });
+  const meta = {};
+  (d.securities || []).forEach(s => { meta[s.SECID] = s; });
+
+  const out = {};
+  (d.marketdata || []).forEach(m => {
+    const v = m.CURRENTVALUE ?? m.LASTVALUE;
+    if (v == null) return;
+    const prev = m.LASTVALUE ?? null;
+    out[m.SECID] = {
+      secid: m.SECID,
+      name: meta[m.SECID]?.NAME || m.SECID,
+      shortname: meta[m.SECID]?.SHORTNAME || m.SECID,
+      decimals: meta[m.SECID]?.DECIMALS ?? 2,
+      value: +v,
+      open: m.OPENVALUE != null ? +m.OPENVALUE : null,
+      changePct: m.LASTCHANGEPRC != null ? +m.LASTCHANGEPRC : null,
+      monthChangePct: m.MONTHCHANGEPRC != null ? +m.MONTHCHANGEPRC : null,
+      yearChangePct: m.YEARCHANGEPRC != null ? +m.YEARCHANGEPRC : null,
+      high: m.HIGH != null ? +m.HIGH : null,
+      low: m.LOW != null ? +m.LOW : null,
+      date: m.TRADEDATE || null,
+      time: m.UPDATETIME || null,
+      prev,
+    };
+  });
+  return out;
+}
+
+/** Медиана набора чисел (для «ВДО (медиана)» и «надёжные корпораты»). */
+export function median(nums) {
+  const a = nums.filter(v => Number.isFinite(v)).sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+/** Доходность ОФЗ на заданный срок — линейная интерполяция кривой. */
+export function curveAt(curve, years) {
+  if (!curve?.length) return null;
+  const pts = curve.filter(p => p.value != null).sort((a, b) => a.period - b.period);
+  if (!pts.length) return null;
+  if (years <= pts[0].period) return pts[0].value;
+  if (years >= pts[pts.length - 1].period) return pts[pts.length - 1].value;
+  for (let i = 1; i < pts.length; i++) {
+    if (years <= pts[i].period) {
+      const a = pts[i - 1], b = pts[i];
+      const k = (years - a.period) / (b.period - a.period || 1);
+      return a.value + (b.value - a.value) * k;
+    }
+  }
+  return null;
 }
 
 /* ── кривая доходности ОФЗ ───────────────────────────────────────── */
