@@ -15,7 +15,11 @@ async function issFetch(path, params = {}) {
   });
   const resp = await fetch(url, { credentials: 'omit' });
   if (!resp.ok) throw new Error(`ISS ${resp.status} for ${path}`);
-  return resp.json();
+  // iss.json=extended returns an array: [charsetinfo, {columns, data}] or [charsetinfo, {name: [...], ...}]
+  const arr = await resp.json();
+  // The actual data is in arr[1] - object with keys like 'securities', 'marketdata' etc.
+  const data = Array.isArray(arr) && arr.length > 1 ? arr[1] : arr;
+  return data || {};
 }
 
 // ═══════════════════════════════ Bonds (TQCB board) ═══════════════════════════════
