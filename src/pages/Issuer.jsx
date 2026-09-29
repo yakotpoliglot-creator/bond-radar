@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { fetchBonds, fetchIssuerInfo, fetchEmitter, bondsOfIssuer, COUPON_LABEL, moexReportsUrl } from '../api/moex';
+import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, girboUrl, bondsOfIssuer, COUPON_LABEL, moexReportsUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox } from '../components/ui';
 import { nf, money, dateShort } from '../lib/format';
 
@@ -16,6 +16,7 @@ export default function Issuer() {
   const [all, setAll] = useState([]);
   const [info, setInfo] = useState(null);
   const [emitter, setEmitter] = useState(null);
+  const [girbo, setGirbo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [kind, setKind] = useState('all'); // фильтр по типу купона
@@ -57,6 +58,19 @@ export default function Issuer() {
     fetchEmitter(info.id).then(r => { if (alive) setEmitter(r); }).catch(() => {});
     return () => { alive = false; };
   }, [info?.id]);
+
+  /* ── бухгалтерская отчётность из ГИР БО ФНС (по ИНН эмитента) ──── *
+   * Файл girbo.json собирает робот раз в неделю: ФНС не отдаёт CORS,
+   * поэтому браузер не может обратиться к bo.nalog.gov.ru напрямую.
+   */
+  useEffect(() => {
+    let alive = true;
+    setGirbo(null);
+    const inn = emitter?.inn || info?.inn;
+    if (!inn) return;
+    fetchGirboByInn(inn).then(r => { if (alive) setGirbo(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [emitter?.inn, info?.inn]);
 
   /* ── доступные типы купона для фильтра ─────────────────────────── */
   const kinds = useMemo(() => {
@@ -205,8 +219,9 @@ export default function Issuer() {
         <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7, marginTop: 12 }}>
           Источник — реестр эмитентов Московской биржи (<span className="mono">iss.moex.com/iss/emitters</span>).
           {' '}
-          <b>Кредитного рейтинга и финансовой отчётности здесь нет</b> — MOEX их в открытом API не отдаёт:
-          в реестре 14 полей, ни одного рейтингового. Отчётность можно посмотреть на сайте биржи по ссылке ниже.
+          <b>Кредитного рейтинга здесь нет</b> — MOEX его в открытом API не отдаёт:
+          в реестре 14 полей, ни одного рейтингового. А вот бухгалтерская отчётность
+          есть — она берётся из ГИР БО ФНС, блоком ниже.
           {emitter?.capitalizationUpdatedAt
             ? <span className="c-3"> Капитализация обновлена {String(emitter.capitalizationUpdatedAt).slice(0, 16)}.</span>
             : null}
@@ -221,6 +236,68 @@ export default function Issuer() {
           <Link className="btn btn-sm" to={`/issuer/${key}`} onClick={() => window.scrollTo(0, 0)}>↑ Наверх</Link>
         </div>
       </Panel>
+
+      {/* ── Бухгалтерская отчётность из ГИР БО ФНС ────────────────── */}
+      {girbo && !girbo.closed && girbo.years?.length ? (
+        <Panel
+          title="Бухгалтерская отчётность"
+          style={{ marginTop: 14 }}
+          right={<span className="c-3" style={{ fontSize: 11 }}>ГИР БО ФНС · тыс. → ₽</span>}
+        >
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th className="nosort">ГОД</th>
+                  <th className="nosort">ВЫРУЧКА</th>
+                  <th className="nosort">АКТИВЫ</th>
+                  <th className="nosort">ОПУБЛИКОВАНО</th>
+                </tr>
+              </thead>
+              <tbody>
+                {girbo.years.map(y => (
+                  <tr key={y.year} style={{ cursor: 'default' }}>
+                    <td className="mono" style={{ fontWeight: 600 }}>{y.year}</td>
+                    <td className="mono">{money(y.revenue)}</td>
+                    <td className="mono">{money(y.assets)}</td>
+                    <td className="c-3" style={{ fontSize: 11 }}>{y.publishedAt ? dateShort(y.publishedAt) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7, marginTop: 12 }}>
+            Источник — <b>Государственный информационный ресурс бухгалтерской отчётности</b> ФНС России
+            {' '}(<span className="mono">bo.nalog.gov.ru</span>), который ведётся по Федеральному закону
+            № 402-ФЗ «О бухгалтерском учёте», ст. 18. Данные публичные, регистрация не нужна.
+            <br />
+            <b>Важно понимать:</b> это отчётность <b>по РСБУ</b> — то есть самого юридического лица,
+            которое выпустило облигации. Она может заметно отличаться от консолидированной
+            отчётности группы по МСФО, которую публикуют для инвесторов: у материнской компании
+            выручка бывает в разы меньше, чем у всей группы.
+            <br />
+            Показаны только <b>выручка и валюта баланса</b> — то, что ФНС отдаёт открыто.
+            EBITDA, чистый долг и ICR требуют полной формы отчётности, а её часть организаций
+            закрывает от публичного доступа: ФНС отвечает «Organization closed for public use»,
+            и мы это ограничение уважаем, а не обходим.
+            {girbo.name ? <span className="c-3"> Организация в реестре: {girbo.name}.</span> : null}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+            <a className="btn btn-sm" href={girboUrl(girbo.girboId)} target="_blank" rel="noopener noreferrer">
+              Открыть в ГИР БО ↗
+            </a>
+          </div>
+        </Panel>
+      ) : girbo?.closed ? (
+        <Panel title="Бухгалтерская отчётность" style={{ marginTop: 14 }}>
+          <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
+            Организация <b>закрыла свою отчётность</b> от публичного доступа в ГИР БО ФНС.
+            Это её право, и мы его уважаем — обходить ограничение не будем.
+          </div>
+        </Panel>
+      ) : null}
     </div>
   );
 }

@@ -1,0 +1,53 @@
+name: Отчётность ГИР БО
+
+# Робот собирает бухгалтерскую отчётность эмитентов из ГИР БО ФНС
+# и коммитит её в public/girbo.json. Браузер не может обратиться к ФНС
+# напрямую — та не отдаёт CORS-заголовок ни на одном своём эндпоинте.
+#
+# Правовая основа: ГИР БО ведётся ФНС по Федеральному закону № 402-ФЗ
+# «О бухгалтерском учёте», ст. 18 и является публичным ресурсом.
+# Организации, закрывшие доступ к своей отчётности, помечаются как
+# closed и не показываются на сайте — ограничение мы не обходим.
+#
+# Отчётность годовая, поэтому раз в неделю более чем достаточно.
+
+on:
+  schedule:
+    # Каждый понедельник в 03:17 UTC — ночью, вне пиковой нагрузки на ФНС
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: girbo
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Собрать отчётность из ГИР БО
+        run: node scripts/girbo.mjs
+
+      # Коммитим только если файл реально изменился — пустых коммитов не будет.
+      - name: Закоммитить изменения
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/girbo.json
+          if git diff --staged --quiet; then
+            echo "Данные не изменились — коммит не нужен."
+          else
+            git commit -m "Робот: обновлена отчётность эмитентов из ГИР БО ФНС"
+            git push
+          fi

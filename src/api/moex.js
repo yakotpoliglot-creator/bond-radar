@@ -344,6 +344,48 @@ export function moexReportsUrl(emitterId) {
     : `https://www.moex.com/ru/listing/emidocs.aspx?id=${emitterId}`;
 }
 
+/* ── бухгалтерская отчётность из ГИР БО ФНС ──────────────────────── *
+ * ГИР БО (bo.nalog.gov.ru) ведёт ФНС по ФЗ № 402-ФЗ «О бухгалтерском
+ * учёте», ст. 18 — ресурс по закону публичный. Но из браузера к нему
+ * обратиться нельзя: ФНС не отдаёт CORS-заголовок ни на одном своём
+ * эндпоинте (проверено на поиске, карточке организации и выгрузке).
+ *
+ * Поэтому данные собирает робот (scripts/girbo.mjs) раз в неделю и
+ * кладёт рядом с сайтом файл girbo.json. Браузер читает его с того же
+ * домена — быстро и без внешних запросов.
+ *
+ * Организации, закрывшие доступ к своей отчётности, помечены closed.
+ * Мы уважаем это ограничение и ничего не показываем по ним.
+ */
+let girboCache;
+let girboPromise;
+
+/** Весь файл отчётности. Загружается один раз за сессию. */
+export async function fetchGirbo() {
+  if (girboCache) return girboCache;
+  if (!girboPromise) {
+    const base = import.meta.env?.BASE_URL || '/';
+    girboPromise = fetch(`${base}girbo.json`, { credentials: 'omit' })
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then(d => { girboCache = d; return d; });
+  }
+  return girboPromise;
+}
+
+/** Отчётность конкретного эмитента по его ИНН. */
+export async function fetchGirboByInn(inn) {
+  const key = String(inn || '').trim();
+  if (!key) return null;
+  const all = await fetchGirbo();
+  return all?.organizations?.[key] || null;
+}
+
+/** Публичная карточка организации в ГИР БО — для ссылки на первоисточник. */
+export function girboUrl(girboId) {
+  return girboId == null ? 'https://bo.nalog.gov.ru/' : `https://bo.nalog.gov.ru/nbo/organizations/${girboId}`;
+}
+
 /** Карточка выпуска на сайте MOEX. */
 export function moexIssueUrl(secidOrIsin, board) {
   if (!secidOrIsin) return null;
