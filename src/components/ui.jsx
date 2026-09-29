@@ -110,8 +110,20 @@ const COLS = {
   },
   currency: { label: 'Вал.', nosort: true, cell: b => (b.isCurrency ? <span className="tag a">{b.currency}</span> : <span className="c-3">RUB</span>) },
   zspread: {
+    /* MOEX отдаёт ZSPREAD уже в процентных пунктах (46.22 = 46,22 %),
+       а не в базисных. Раньше здесь было деление на 100 — колонка
+       показала бы 0,46 % вместо 46,22 %. В таблицы она не выводилась,
+       поэтому ошибка не проявлялась. */
     label: 'Z-спред', sort: b => b.zSpread ?? -999,
-    cell: b => (b.zSpread == null ? <span className="c-3">—</span> : <span className="mono">{nf(b.zSpread / 100, 2)}%</span>),
+    cell: b => (b.zSpread == null
+      ? <span className="c-3">—</span>
+      : <span className={'mono ' + (b.zSpread > 5 ? 'c-r' : b.zSpread > 0 ? 'c-g' : 'c-3')}>{nf(b.zSpread, 2)}%</span>),
+  },
+  currentYield: {
+    label: 'Куп. дох.', sort: b => b.currentYield ?? -999,
+    cell: b => (b.currentYield == null
+      ? <span className="c-3">—</span>
+      : <span className="mono">{nf(b.currentYield, 2)}%</span>),
   },
 };
 
