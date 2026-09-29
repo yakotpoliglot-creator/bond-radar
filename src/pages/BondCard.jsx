@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
 import { fetchBonds, fetchBondCard, fetchIssuerInfo, moexReportsUrl, moexIssueUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag } from '../components/ui';
-import { nf, money, date, dateShort, duration, timeLeft, ytmClass } from '../lib/format';
+import { nf, money, date, dateShort, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -297,7 +297,7 @@ export default function BondCard() {
         <Kpi
           label="Цена, %"
           value={bond?.price == null ? '—' : nf(bond.price, 2)}
-          sub={bond?.priceChange == null ? 'от номинала' : ((bond.priceChange > 0 ? '+' : '') + nf(bond.priceChange, 2) + '% за день')}
+          sub={bond?.priceChange == null ? 'от номинала' : (chgStrA(bond.priceChange) + ' за день')}
         />
         <Kpi
           label="Доходность, %"

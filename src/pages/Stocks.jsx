@@ -6,7 +6,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { fetchStocks } from '../api/moex';
 import { Panel, Kpi, Loading, ErrorBox, Pager } from '../components/ui';
-import { nf, money, chgClass, chgStr } from '../lib/format';
+import { nf, money, chgPill, chgStrA } from '../lib/format';
 
 const PER_PAGE = 50;
 
@@ -30,7 +30,7 @@ const COLS = {
   },
   change: {
     label: 'Изм. за день', sort: s => s.change ?? -999,
-    cell: s => <span className={chgClass(s.change)}>{chgStr(s.change)}</span>,
+    cell: s => <span className={chgPill(s.change)}>{chgStrA(s.change)}</span>,
   },
   open: {
     label: 'Открытие', sort: s => s.open ?? -1,
@@ -214,7 +214,7 @@ export default function StocksPage() {
                     {s.shortname}
                   </td>
                   <td className="mono">{money(s.turnover)}</td>
-                  <td className={chgClass(s.change)}>{chgStr(s.change)}</td>
+                  <td><span className={chgPill(s.change)}>{chgStrA(s.change)}</span></td>
                 </tr>
               ))}
               {!top10.length && (

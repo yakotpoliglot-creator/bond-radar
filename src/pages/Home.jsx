@@ -5,12 +5,63 @@ import {
   fetchYieldCurve,
   fetchIndexHistory,
   fetchIndexValues,
+  fetchStocks,
   KEY_RATE,
   KEY_RATE_HISTORY,
 } from '../api/moex';
 import { Kpi, Panel, Loading, ErrorBox, BondTable } from '../components/ui';
 import { IndexCard, RatesNow, TopByYtm } from '../components/market';
-import { nf, dateShort, chgStr, chgClass } from '../lib/format';
+import { nf, dateShort, chgStr, chgStrA, chgClass, chgPill } from '../lib/format';
+
+/* ── Бегущая строка рынка ──────────────────────────────────────────
+   Приём с bondradar.pro: индексы и самые торгуемые акции идут одной
+   лентой, у каждого изменения — треугольник и цвет. Данные живые,
+   из MOEX: индексы берём из общего списка индексов, акции — из TQBR.
+   Лента не заменяет KPI-строку, а даёт быстрый взгляд «что сегодня
+   двигается» до того, как читать таблицы. */
+const TICKER_INDEXES = [
+  { secid: 'IMOEX', label: 'IMOEX' },
+  { secid: 'RGBI', label: 'RGBI' },
+  { secid: 'RUCBCPNS', label: 'Корп' },
+];
+
+function Ticker({ rates, stocks }) {
+  const items = useMemo(() => {
+    const out = [];
+    for (const t of TICKER_INDEXES) {
+      const r = rates?.[t.secid];
+      if (r?.value != null) {
+        out.push({ key: t.secid, label: t.label, value: r.value, pct: r.changePct, dec: r.decimals ?? 2 });
+      }
+    }
+    /* Пять самых торгуемых акций дня — по обороту, а не по капитализации:
+       в ленте интересно то, что реально покупали и продавали сегодня. */
+    const top = (stocks || [])
+      .filter(s => s.price != null && s.change != null)
+      .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
+      .slice(0, 5);
+    for (const s of top) {
+      out.push({ key: s.secid, label: s.shortname, value: s.price, pct: s.change, dec: 2, unit: '₽' });
+    }
+    return out;
+  }, [rates, stocks]);
+
+  if (!items.length) return null;
+
+  return (
+    <div className="ticker" role="list" aria-label="Котировки рынка">
+      {items.map(it => (
+        <div className="ticker-i" role="listitem" key={it.key}>
+          <span className="ticker-n">{it.label}</span>
+          <span className="ticker-v">
+            {nf(it.value, it.dec)}{it.unit ? ' ' + it.unit : ''}
+          </span>
+          <span className={chgPill(it.pct)}>{chgStrA(it.pct)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    Главная страница — дашборд рынка облигаций (аналог bondradar.pro)
@@ -173,6 +224,7 @@ export default function Home() {
   const [rgbi, setRgbi] = useState(null);
   const [corp, setCorp] = useState(null);
   const [rates, setRates] = useState(null);
+  const [stocks, setStocks] = useState(null);
   const [group, setGroup] = useState('all');
 
   const curveCanvas = useRef(null);
@@ -184,12 +236,13 @@ export default function Home() {
     setLoading(true);
     setFatal(null);
 
-    const [c, r, ci, b, rt] = await Promise.all([
+    const [c, r, ci, b, rt, st] = await Promise.all([
       fetchYieldCurve().catch(() => null),
       fetchIndexHistory('RGBI').catch(() => null),
       loadCorpIndex().catch(() => null),
       fetchBonds().catch(() => null),
       fetchIndexValues().catch(() => null),
+      fetchStocks().catch(() => null),
     ]);
 
     setCurve(c && c.length ? c : null);
@@ -197,6 +250,7 @@ export default function Home() {
     setCorp(ci);
     setBonds(b && b.length ? b : null);
     setRates(rt);
+    setStocks(st && st.length ? st : null);
 
     // Фатально, только если не пришло вообще ничего — иначе показываем
     // рабочие блоки, а упавшие панели помечаем как недоступные.
@@ -519,6 +573,9 @@ export default function Home() {
         <button className="btn" onClick={load}>Обновить</button>
       </div>
 
+      {/* ── Бегущая строка рынка ──────────────────────────────────── */}
+      <Ticker rates={rates} stocks={stocks} />
+
       {/* ── 1. KPI ────────────────────────────────────────────────── */}
       <div style={kpiGrid}>
         <Kpi
@@ -530,7 +587,7 @@ export default function Home() {
           label="Индекс RGBI"
           value={rgbiLast?.close != null ? nf(rgbiLast.close, 2) : '—'}
           sub={rgbiLast
-            ? `${dateShort(rgbiLast.date)} · ${chgStr(rgbiChange)}`
+            ? `${dateShort(rgbiLast.date)} · ${chgStrA(rgbiChange)}`
             : 'история недоступна'}
           cls={rgbiChange == null ? '' : chgClass(rgbiChange)}
         />

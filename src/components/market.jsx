@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchIndexHistory, curveAt, median, daysUntil } from '../api/moex';
-import { nf } from '../lib/format';
+import { nf, chgStrA, chgPill } from '../lib/format';
 import { Panel } from './ui';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -109,13 +109,13 @@ function IndexCard({ secid, title, note, initialPeriod = '3M' }) {
             <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, fontWeight: 700 }}>
               {nf(stats.last, 2)}
             </span>
-            <span className={up ? 'c-g' : 'c-r'} style={{ fontSize: 12, fontWeight: 600 }}>
-              {stats.periodPct == null ? '—' : (stats.periodPct >= 0 ? '+' : '') + nf(stats.periodPct, 2) + '%'}
+            <span className={chgPill(stats.periodPct) + ' lg'} title={'Изменение за ' + PERIODS.find(p => p.key === period)?.label.toLowerCase()}>
+              {chgStrA(stats.periodPct)}
             </span>
             <span className="c-3" style={{ fontSize: 11 }}>за {PERIODS.find(p => p.key === period)?.label.toLowerCase()}</span>
             {stats.dayPct != null && (
               <span className="c-3" style={{ fontSize: 11 }}>
-                за день <span className={stats.dayPct >= 0 ? 'c-g' : 'c-r'}>{nf(stats.dayPct, 2)}%</span>
+                за день <span className={chgPill(stats.dayPct)}>{chgStrA(stats.dayPct)}</span>
               </span>
             )}
           </div>

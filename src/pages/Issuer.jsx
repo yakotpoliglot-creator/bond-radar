@@ -95,6 +95,14 @@ export default function Issuer() {
     const mats = bonds.map(b => b.matDate).filter(Boolean).sort();
     const currencies = [...new Set(bonds.map(b => b.currency).filter(Boolean))];
 
+    /* Состав портфеля выпусков — как блок «На что смотреть» на
+       bondradar.pro. Всё считается из того же списка, без новых запросов.
+       Число выпусков «только для квалов» показать не можем: биржа
+       отдаёт признак ISQUALIFIEDINVESTORS лишь в подробной карточке
+       выпуска, а не в общем списке, и тянуть 50+ карточек ради одной
+       цифры не станем. */
+    const byKind = k => bonds.filter(b => b.couponKind === k).length;
+
     return {
       count: bonds.length,
       total,
@@ -103,6 +111,15 @@ export default function Issuer() {
       matFrom: mats[0] || null,
       matTill: mats[mats.length - 1] || null,
       currencies,
+      fix: byKind('fix'),
+      float: byKind('float'),
+      amort: bonds.filter(b => b.isAmort).length,
+      offer: bonds.filter(b => b.offerDate).length,
+      currencyBonds: bonds.filter(b => b.isCurrency).length,
+      subfederal: bonds.filter(b => b.isSubfederal).length,
+      withYtm: ytms.length,
+      yearFrom: mats[0] ? mats[0].slice(0, 4) : null,
+      yearTill: mats.length ? mats[mats.length - 1].slice(0, 4) : null,
     };
   }, [bonds]);
 
@@ -154,6 +171,58 @@ export default function Issuer() {
         />
         <Kpi label="Валюты" value={summary.currencies.join(', ') || '—'} sub="по номиналу выпусков" />
       </div>
+
+      {/* ── Состав выпусков: «на что смотреть» ────────────────────────
+          Считается целиком из того же списка бумаг, что уже загружен,
+          поэтому не требует ни одного лишнего запроса к бирже. */}
+      <Panel title="На что смотреть в выпусках" style={{ marginBottom: 14 }}>
+        <ul className="facts">
+          <li>
+            <b>{nf(summary.count, 0)}</b>{' '}
+            {summary.count === 1 ? 'выпуск' : summary.count < 5 ? 'выпуска' : 'выпусков'} в обращении
+            {summary.yearFrom && summary.yearTill
+              ? <> с погашением с <b>{summary.yearFrom}</b> по <b>{summary.yearTill}</b> год</>
+              : null}.
+          </li>
+          {summary.fix > 0 && (
+            <li>
+              С фиксированным купоном — <b>{summary.fix}</b>
+              {summary.float > 0 ? <>, флоатеров — <b>{summary.float}</b></> : null}.
+              {' '}У флоатера купон привязан к ставке, поэтому его доходность заранее неизвестна.
+            </li>
+          )}
+          {summary.amort > 0 && (
+            <li>
+              С амортизацией номинала — <b>{summary.amort}</b>: номинал возвращают частями,
+              поэтому цена и доходность считаются сложнее, чем у обычной бумаги.
+            </li>
+          )}
+          {summary.offer > 0 && (
+            <li>
+              С офертой — <b>{summary.offer}</b>: эмитент может выкупить бумагу раньше срока
+              погашения, и тогда доходность считается к оферте, а не к погашению.
+            </li>
+          )}
+          {summary.currencyBonds > 0 && (
+            <li>
+              Валютных — <b>{summary.currencyBonds}</b>: доходность зависит ещё и от курса,
+              а не только от купона.
+            </li>
+          )}
+          {summary.subfederal > 0 && (
+            <li>
+              Субфедеральных — <b>{summary.subfederal}</b>: это региональные займы,
+              их надёжность опирается на бюджет региона, а не на выручку компании.
+            </li>
+          )}
+          {summary.withYtm < summary.count && (
+            <li className="c-3">
+              По <b>{summary.count - summary.withYtm}</b> выпускам доходность не показана:
+              биржа отдаёт недостоверное значение или по бумаге не было сделок.
+            </li>
+          )}
+        </ul>
+      </Panel>
 
       {/* ── Фильтр по типу купона ─────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
