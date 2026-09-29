@@ -339,9 +339,76 @@ table.tbl tbody tr { cursor: pointer; }
 .chip:hover { border-color: var(--accent); color: var(--text); }
 .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+/* ═══════════════════ Мобильная шапка и меню ═══════════════════ *
+ * На десктопе шапки нет вовсе: там меню всегда видно слева.
+ * На узких экранах .side уезжает влево и выезжает по бургеру.
+ */
+.topbar {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.burger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 34px;
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all var(--trans);
+}
+.burger:hover, .burger:active { border-color: var(--accent); color: var(--accent); }
+.topbar-t {
+  font-family: 'Lora', serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.topbar-cur {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Затемнение под выдвинутым меню. На десктопе не показывается никогда. */
+.backdrop { display: none; }
+.backdrop.show {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  background: rgba(0, 0, 0, .45);
+}
+
 /* ═══════════════════════ Адаптив ═══════════════════════ */
 @media (max-width: 900px) {
-  .side { transform: translateX(-100%); }
-  .side.open { transform: none; }
+  .topbar { display: flex; }
+  .side {
+    transform: translateX(-100%);
+    box-shadow: none;
+    /* На телефоне меню может быть выше экрана — разрешаем прокрутку */
+    overscroll-behavior: contain;
+  }
+  .side.open {
+    transform: none;
+    box-shadow: 0 0 40px rgba(0, 0, 0, .35);
+  }
   .main { margin-left: 0; padding: 14px; }
 }
