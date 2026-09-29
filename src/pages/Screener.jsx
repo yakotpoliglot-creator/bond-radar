@@ -6,7 +6,7 @@ import { nf } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
 /* ═══════════════════════════════════════════════════════════════════
-   Скринер облигаций — все выпуски основного режима TQCB (≈3033 шт).
+   Скринер облигаций — все выпуски MOEX: TQCB (корпоративные) + TQOB (ОФЗ), ≈3095 шт.
    Данные: fetchBonds() → iss.moex.com. Сортировка — внутри BondTable.
    ═══════════════════════════════════════════════════════════════════ */
 
@@ -205,7 +205,7 @@ export default function Screener() {
 
       {/* ── Сводка ── */}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 12 }}>
-        <Kpi label="Всего выпусков" value={bonds.length} sub="режим TQCB, MOEX" />
+        <Kpi label="Всего выпусков" value={bonds.length} sub="TQCB + TQOB, MOEX" />
         <Kpi label="Отфильтровано" value={rows.length} sub={bonds.length ? nf(rows.length / bonds.length * 100, 1) + '% от рынка' : ''} />
         <Kpi label="Средняя доходность" value={avgYtm == null ? '—' : nf(avgYtm, 2) + '%'} sub="по выборке" />
       </div>

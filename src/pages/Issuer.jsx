@@ -90,7 +90,7 @@ export default function Issuer() {
     return (
       <Panel title="Эмитент не найден">
         <div className="empty">
-          По коду <span className="mono">{key}</span> выпусков в основном режиме TQCB не найдено.
+          По коду <span className="mono">{key}</span> выпусков не найдено.
           <div style={{ marginTop: 12 }}>
             <Link className="btn" to="/issuers">← Все эмитенты</Link>
           </div>

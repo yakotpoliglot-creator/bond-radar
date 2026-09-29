@@ -503,7 +503,7 @@ export default function Home() {
         <Kpi
           label="Выпусков в базе"
           value={bonds ? nf(bonds.length, 0) : '—'}
-          sub={topTurnover.length ? `лидер оборота: ${topTurnover[0].shortname}` : 'основной режим TQCB'}
+          sub={topTurnover.length ? `лидер оборота: ${topTurnover[0].shortname}` : 'TQCB + TQOB'}
         />
       </div>
 

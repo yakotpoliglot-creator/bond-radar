@@ -72,7 +72,7 @@ export default function BondCard() {
     return () => { alive = false; };
   }, [id]);
 
-  /** Бумага в общем списке TQCB (по ISIN или SECID). */
+  /** Бумага в общем списке (TQCB + TQOB) по ISIN или SECID. */
   const bond = useMemo(() => {
     const key = (id || '').toUpperCase();
     return bonds.find(b => b.isin === key || b.secid === key) || null;
@@ -221,7 +221,7 @@ export default function BondCard() {
     );
   }
 
-  // Поля бумаги могут отсутствовать (нет в TQCB) — берём из карточки MOEX.
+  // Поля бумаги могут отсутствовать (нет в общем списке) — берём из карточки MOEX.
   const shortname = bond?.shortname || card?.shortname || id;
   const fullname = bond?.name || card?.issueName || card?.description?.NAME || shortname;
   const isin = bond?.isin || card?.description?.ISIN || id;
@@ -257,7 +257,7 @@ export default function BondCard() {
               className={'btn' + (isFav ? ' btn-green' : '')}
               onClick={() => bond && toggle(bond.isin)}
               disabled={!bond}
-              title={bond ? 'Добавить или убрать из избранного' : 'Бумаги нет в основном режиме TQCB'}
+              title={bond ? 'Добавить или убрать из избранного' : 'Бумаги нет в списке MOEX'}
             >
               {isFav ? '★ В избранном' : '★ В избранное'}
             </button>
