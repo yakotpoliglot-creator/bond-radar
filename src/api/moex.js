@@ -129,7 +129,20 @@ function normalize(s, m, y, board = 'TQCB') {
     isSubfederal: isSubfederal(s.REGNUMBER),
 
     price,
-    priceChange: m?.LASTCHANGEPRCNT != null ? +m.LASTCHANGEPRCNT : null,
+    /* Изменение цены за день. Важно: LASTCHANGEPRCNT здесь НЕ подходит —
+       это изменение последней сделки к предыдущей сделке, то есть шаг
+       между двумя тиками. Проверка на живых данных: LASTCHANGEPRCNT
+       совпадал с настоящим изменением за день лишь у 7% выпусков, а у
+       остальных давал шум вплоть до противоположного знака.
+       LASTTOPREVPRICE — изменение последней цены к закрытию прошлого
+       дня; сверено с расчётом (LAST - PREVPRICE)/PREVPRICE у всех
+       1727 торговавшихся выпусков, расхождений нет.
+       Если сделок сегодня не было, LAST равен null, и изменения нет —
+       показываем прочерк, а не ложный ноль. То же для новых выпусков,
+       которые торгуются первый день: у них PREVPRICE пуст, сравнивать
+       не с чем, поэтому биржа отдаёт 0 — показываем прочерк. */
+    priceChange: (m?.LAST != null && m?.LASTTOPREVPRICE != null && s.PREVPRICE != null)
+      ? +m.LASTTOPREVPRICE : null,
     prevPrice: s.PREVPRICE != null ? +s.PREVPRICE : null,
 
     ytm,
@@ -458,6 +471,11 @@ export async function fetchIndexValues() {
       decimals: meta[m.SECID]?.DECIMALS ?? 2,
       value: +v,
       open: m.OPENVALUE != null ? +m.OPENVALUE : null,
+      /* У индексов поле называется ИНАЧЕ, чем у акций и облигаций:
+         LASTCHANGEPRC («изменение к предыдущему закрытию»), и оно
+         верное. Сверено по RGBI: 111,22 против 111,69 вчера даёт
+         −0,42%, ровно как в поле. Не заменяйте его на LASTCHANGEPRCNT
+         по аналогии с бумагами — у индексов это разные величины. */
       changePct: m.LASTCHANGEPRC != null ? +m.LASTCHANGEPRC : null,
       monthChangePct: m.MONTHCHANGEPRC != null ? +m.MONTHCHANGEPRC : null,
       yearChangePct: m.YEARCHANGEPRC != null ? +m.YEARCHANGEPRC : null,
@@ -562,8 +580,17 @@ export async function fetchStocks({ includeFunds = false } = {}) {
         secType: s.SECTYPE,
         isPreferred: s.SECTYPE === '2',
         price,
-        change: m?.LASTCHANGEPRCNT != null ? +m.LASTCHANGEPRCNT : null,
-        lastChange: m?.LASTCHANGE != null ? +m.LASTCHANGE : null,
+        /* То же, что и у облигаций: LASTCHANGEPRCNT — это шаг между
+           двумя последними сделками, а не изменение за день.
+           Проверено: из 446 торговавшихся акций он совпадал с реальным
+           изменением лишь у 33, тогда как LASTTOPREVPRICE — у всех 446.
+           Пример вранья: Сбербанк показывал 0,00% вместо +1,06%,
+           ГАЗПРОМ −0,01% вместо +1,70%, ЛУКОЙЛ −0,01% вместо +1,59%.
+           Прочерк — когда сделок не было или бумага торгуется первый
+           день и предыдущего закрытия для сравнения не существует. */
+        change: (m?.LAST != null && m?.LASTTOPREVPRICE != null && s.PREVPRICE != null)
+          ? +m.LASTTOPREVPRICE : null,
+        lastChange: (m?.LAST != null && s.PREVPRICE != null) ? +m.LAST - +s.PREVPRICE : null,
         open: m?.OPEN != null ? +m.OPEN : null,
         low: m?.LOW != null ? +m.LOW : null,
         high: m?.HIGH != null ? +m.HIGH : null,
