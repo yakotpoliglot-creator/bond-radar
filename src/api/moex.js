@@ -25,33 +25,13 @@ async function issFetch(path, params = {}) {
 // ═══════════════════════════════ Bonds (TQCB board) ═══════════════════════════════
 export async function fetchAllBonds() {
   const data = await issFetch('/engines/stock/markets/bonds/boards/TQCB/securities.json', {
-    limit: 100, // will paginate
+    limit: 100,
   });
   return data.securities || [];
 }
 
-export async function fetchBondsPage(limit = 100, start = 0) {
-  const data = await issFetch('/engines/stock/markets/bonds/boards/TQCB/securities.json', {
-    limit, start,
-  });
-  return { securities: data.securities || [], total: data.securities?.length || 0 };
-}
-
-export async function fetchAllBondsFull() {
-  const all = [];
-  let start = 0;
-  const LIMIT = 100;
-  while (true) {
-    const data = await issFetch('/engines/stock/markets/bonds/boards/TQCB/securities.json', {
-      limit: LIMIT, start,
-    });
-    const batch = data.securities || [];
-    all.push(...batch);
-    if (batch.length < LIMIT) break;
-    start += LIMIT;
-  }
-  return all;
-}
+// fetchAllBondsFull is just fetchAllBonds — MOEX returns all bonds in one request
+export const fetchAllBondsFull = fetchAllBonds;
 
 // ═══════════════════════════════ Bond detail ═══════════════════════════════
 export async function fetchBondDetail(secid) {
