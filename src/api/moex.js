@@ -1,134 +1,397 @@
-/* ═══════════════════════════════════════════════════════════
-   MOEX ISS API — Data Layer
-   Direct fetch from iss.moex.com (CORS verified ✅)
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   MOEX ISS — слой данных
+   Все эндпоинты проверены вживую (scripts/probe*.mjs).
+   Данные грузятся прямо из браузера (CORS подтверждён).
+   ═══════════════════════════════════════════════════════════════════ */
 
-const ISS_BASE = 'https://iss.moex.com/iss';
+const ISS = 'https://iss.moex.com/iss';
+// Облигации торгуются на двух основных площадках:
+//   TQCB — корпоративные (3033 выпуска)
+//   TQOB — государственные ОФЗ (62 выпуска)
+// Пересечений между ними нет, поэтому списки объединяются.
+const BOND_BOARDS = ['TQCB', 'TQOB'];
+const SHARES_URL = `${ISS}/engines/stock/markets/shares/boards/TQBR/securities.json`;
 
-// Helper: fetch with params, return parsed JSON
-async function issFetch(path, params = {}) {
-  const url = new URL(ISS_BASE + path);
+/* ── низкоуровневый запрос ───────────────────────────────────────── */
+async function iss(path, params = {}, { retries = 3 } = {}) {
+  const url = new URL(ISS + path);
   url.searchParams.set('iss.meta', 'off');
   url.searchParams.set('iss.json', 'extended');
-  Object.entries(params).forEach(([k, v]) => {
+  for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null) url.searchParams.set(k, v);
-  });
-  const resp = await fetch(url, { credentials: 'omit' });
-  if (!resp.ok) throw new Error(`ISS ${resp.status} for ${path}`);
-  // iss.json=extended returns an array: [charsetinfo, {columns, data}] or [charsetinfo, {name: [...], ...}]
-  const arr = await resp.json();
-  // The actual data is in arr[1] - object with keys like 'securities', 'marketdata' etc.
-  const data = Array.isArray(arr) && arr.length > 1 ? arr[1] : arr;
-  return data || {};
+  }
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const r = await fetch(url, { credentials: 'omit' });
+      if (!r.ok) throw new Error(`ISS ${r.status}`);
+      const text = await r.text();
+      if (text.trimStart().startsWith('<')) throw new Error('ISS вернул HTML');
+      const arr = JSON.parse(text);
+      // iss.json=extended → [charsetinfo, {block: [...], ...}]
+      return Array.isArray(arr) && arr.length > 1 ? arr[1] : arr;
+    } catch (e) {
+      if (attempt === retries) throw e;
+      await new Promise(res => setTimeout(res, 400 * attempt));
+    }
+  }
 }
 
-// ═══════════════════════════════ Bonds (TQCB board) ═══════════════════════════════
-export async function fetchAllBonds() {
-  const data = await issFetch('/engines/stock/markets/bonds/boards/TQCB/securities.json', {
-    limit: 100,
-  });
-  return data.securities || [];
+/* ── классификация ───────────────────────────────────────────────── */
+
+// Реальные значения BONDTYPE (проверены):
+//  Облигация с фиксированным (известным) купоном · Облигация с плавающим купоном
+//  Структурная облигация · Амортизируемая облигация · Облигация с фиксированным (неизвестным) купоном
+//  Валютная облигация · Линкер/облигация с индексируемым номиналом · Конвертируемая · Дисконтная
+// COUPON_DETAILS: Фиксированный с известными купонами · Ключевая ставка · Ставка RUONIA · ИПЦ · ...
+export function couponKind(b) {
+  const det = (b.COUPON_DETAILS || '').toLowerCase();
+  const type = (b.BONDTYPE || '').toLowerCase();
+
+  // Плавающий купон: либо формула (ключевая ставка, RUONIA, ИПЦ), либо прямо тип
+  if (/ключевая|ruonia|ипц|cpi|срочная ставка/.test(det)) return 'float';
+  if (type.includes('плавающим')) return 'float';
+  if (type.includes('структурн')) return 'struct';
+  if (type.includes('дисконт')) return 'discount';
+  if (type.includes('конвертируем')) return 'convert';
+  if (type.includes('фиксированн')) return 'fix';
+  if (det.includes('фиксированн')) return 'fix';
+  // «Амортизируемая облигация» в MOEX — это структура, а не тип купона.
+  // COUPON_DETAILS у таких выпусков пустой, но купон в подавляющем большинстве фиксированный.
+  if (type.includes('амортизируем')) return 'fix';
+  return 'other';
 }
 
-// fetchAllBondsFull is just fetchAllBonds — MOEX returns all bonds in one request
-export const fetchAllBondsFull = fetchAllBonds;
+export const COUPON_LABEL = {
+  fix: 'Фикс',
+  float: 'Флоатер',
+  struct: 'Структурная',
+  discount: 'Дисконт',
+  convert: 'Конвертируемая',
+  other: '—',
+};
 
-// ═══════════════════════════════ Bond detail ═══════════════════════════════
-export async function fetchBondDetail(secid) {
-  const data = await issFetch(`/securities/${secid}.json`);
-  return data;
+export const COUPON_TAG = {
+  fix: 'b',
+  float: 'p',
+  struct: 'a',
+  discount: 'g',
+  convert: 'p',
+  other: '',
+};
+
+// Код эмитента из REGNUMBER: 4B02-11-16493-A-001P → 16493-A
+export function issuerKey(regnumber) {
+  if (!regnumber) return null;
+  const m = /(\d{4,6})-([A-ZА-Я]{1,3})(?:-\d|$)/.exec(regnumber);
+  return m ? `${m[1]}-${m[2]}` : null;
 }
 
-export async function fetchBondization(secid) {
-  const data = await issFetch(`/securities/${secid}/bondization.json`);
-  return data;
+const CURRENCY = { SUR: 'RUB', RUB: 'RUB', USD: 'USD', EUR: 'EUR', CNY: 'CNY', CHF: 'CHF', GBP: 'GBP', HKD: 'HKD' };
+
+// Санити-порог доходности. p99 рынка ≈ 104%, «мусорные» выбросы (1776,28 %) отсекаем.
+const YTM_MIN = -50;
+const YTM_MAX = 300;
+
+/* ── нормализация одной бумаги ───────────────────────────────────── */
+function lastNum(...vals) {
+  for (const v of vals) if (v != null && v !== '' && !Number.isNaN(+v)) return +v;
+  return null;
 }
 
-export async function fetchBondByIsin(isin) {
-  const data = await issFetch(`/securities/${isin}.json`);
-  return data;
+function normalize(s, m, y, board = 'TQCB') {
+  const price = lastNum(m?.LAST, m?.LCLOSEPRICE, m?.MARKETPRICE, s.PREVPRICE, s.PREVWAPRICE);
+  const rawYtm = lastNum(s.YIELDATPREVWAPRICE, m?.YIELD);
+  // доходность и «здоровье» значения
+  const ytmOk = rawYtm != null && rawYtm >= YTM_MIN && rawYtm <= YTM_MAX;
+  const ytm = ytmOk ? rawYtm : null;
+
+  const faceUnit = s.FACEUNIT || 'SUR';
+  const currency = CURRENCY[faceUnit] || faceUnit;
+
+  const kind = couponKind(s);
+  const isAmort = (s.BONDTYPE || '').includes('Амортизируем');
+  const durationDays = m?.DURATION != null ? +m.DURATION : null;
+
+  const matDate = s.MATDATE && s.MATDATE !== '0000-00-00' ? s.MATDATE : null;
+  const offerDate = s.OFFERDATE && s.OFFERDATE !== '0000-00-00' ? s.OFFERDATE : null;
+  const buybackDate = s.BUYBACKDATE && s.BUYBACKDATE !== '0000-00-00' ? s.BUYBACKDATE : null;
+
+  return {
+    secid: s.SECID,
+    isin: s.ISIN,
+    shortname: s.SHORTNAME,
+    name: s.SECNAME || s.SHORTNAME,
+    latname: s.LATNAME,
+    regnumber: s.REGNUMBER,
+    issuerKey: issuerKey(s.REGNUMBER),
+    board,
+    isOfz: board === 'TQOB' || /^ОФЗ|^SU\d/.test(s.SHORTNAME || '') || /федерального займа/i.test(s.BONDTYPE || ''),
+
+    price,
+    priceChange: m?.LASTCHANGEPRCNT != null ? +m.LASTCHANGEPRCNT : null,
+    prevPrice: s.PREVPRICE != null ? +s.PREVPRICE : null,
+
+    ytm,
+    ytmRaw: rawYtm,
+    ytmOk,
+    yieldDateType: y?.YIELDDATETYPE || null,   // MATDATE | OFFER | MBS
+
+    couponPercent: s.COUPONPERCENT != null ? +s.COUPONPERCENT : null,
+    couponValue: s.COUPONVALUE != null ? +s.COUPONVALUE : null,
+    couponPeriod: s.COUPONPERIOD != null ? +s.COUPONPERIOD : null,
+    nextCoupon: s.NEXTCOUPON && s.NEXTCOUPON !== '0000-00-00' ? s.NEXTCOUPON : null,
+
+    nkd: s.ACCRUEDINT != null ? +s.ACCRUEDINT : null,
+    faceValue: s.FACEVALUE != null ? +s.FACEVALUE : null,
+    faceUnit,
+    currency,
+    isCurrency: faceUnit !== 'SUR' && faceUnit !== 'RUB',
+
+    matDate,
+    offerDate,
+    buybackDate: buybackDate || offerDate,
+    callOptionDate: s.CALLOPTIONDATE && s.CALLOPTIONDATE !== '0000-00-00' ? s.CALLOPTIONDATE : null,
+
+    durationDays,
+    durationMonths: durationDays != null ? Math.round(durationDays / 30.44 * 10) / 10 : null,
+
+    listLevel: s.LISTLEVEL != null ? +s.LISTLEVEL : null,
+    status: s.STATUS,
+
+    bondType: s.BONDTYPE,
+    bondSubtype: s.BONDSUBTYPE,
+    couponDetails: s.COUPON_DETAILS,
+    couponKind: kind,
+    isAmort,
+    hasOffer: !!offerDate && s.BONDSUBTYPE !== 'До погашения',
+    isQualified: false,
+    isCurrencyBond: (s.BONDTYPE || '').includes('Валютная'),
+
+    turnover: m?.VALTODAY != null ? +m.VALTODAY : 0,
+    zSpread: m?.ZSPREAD != null ? +m.ZSPREAD : null,
+    numTrades: m?.NUMTRADES != null ? +m.NUMTRADES : null,
+
+    issuesize: s.ISSUESIZE != null ? +s.ISSUESIZE : null,
+    issuesizePlaced: s.ISSUESIZEPLACED != null ? +s.ISSUESIZEPLACED : null,
+    lotSize: s.LOTSIZE != null ? +s.LOTSIZE : null,
+
+    updatedAt: m?.SYSTIME || null,
+  };
 }
 
-// ═══════════════════════════════ Yield Curve ═══════════════════════════════
+/* ── кэш ─────────────────────────────────────────────────────────── */
+let bondsCache = null;
+let bondsPromise = null;
+
+/** Все облигации TQCB + TQOB (~3095 шт). Запросы идут параллельно. */
+export function fetchBonds({ force = false } = {}) {
+  if (force) { bondsCache = null; bondsPromise = null; }
+  if (bondsCache) return Promise.resolve(bondsCache);
+  if (!bondsPromise) {
+    bondsPromise = Promise.all(
+      BOND_BOARDS.map(board =>
+        iss(`/engines/stock/markets/bonds/boards/${board}/securities.json`)
+          .then(d => {
+            const S = d.securities || [];
+            const M = new Map((d.marketdata || []).map(r => [r.SECID, r]));
+            const Y = new Map((d.marketdata_yields || []).map(r => [r.SECID, r]));
+            return S.map(s => normalize(s, M.get(s.SECID), Y.get(s.SECID), board));
+          })
+          .catch(e => { console.warn(`Не удалось загрузить ${board}:`, e.message); return []; })
+      )
+    )
+      .then(lists => {
+        const all = lists.flat();
+        // на всякий случай убираем дубли по SECID (межбордовых пересечений нет, но подстрахуемся)
+        const seen = new Set();
+        bondsCache = all.filter(b => !seen.has(b.secid) && seen.add(b.secid));
+        return bondsCache;
+      })
+      .catch(e => { bondsPromise = null; throw e; });
+  }
+  return bondsPromise;
+}
+
+/* ── карточка облигации ──────────────────────────────────────────── */
+export async function fetchBondCard(secidOrIsin) {
+  const id = (secidOrIsin || '').trim().toUpperCase();
+  const [desc, bondization, boardData] = await Promise.all([
+    iss(`/securities/${id}.json`),
+    iss(`/securities/${id}/bondization.json`).catch(() => ({})),
+    iss(`/securities/${id}.json`, { 'iss.only': 'boards' }).catch(() => ({})),
+  ]);
+
+  const description = {};
+  (desc.description || []).forEach(x => { description[x.name] = x.value; });
+
+  const bonds = boardData.boards || [];
+  const mainBoard = bonds.find(b => b.is_primary === 1) || bonds[0];
+
+  const coupons = (bondization.coupons || []).map(c => ({
+    date: c.coupondate,
+    value: c.value != null ? +c.value : null,
+    valuePrc: c.valueprc != null ? +c.valueprc : null,
+    faceValue: c.facevalue != null ? +c.facevalue : null,
+  }));
+  const amortizations = (bondization.amortizations || []).map(a => ({
+    date: a.amortdate,
+    value: a.value != null ? +a.value : null,
+    valuePrc: a.valueprc != null ? +a.valueprc : null,
+    source: a.data_source,
+  }));
+  const offers = (bondization.offers || []).map(o => ({
+    date: o.offerdate,
+    start: o.offerdatestart,
+    end: o.offerdateend,
+    price: o.price != null ? +o.price : null,
+    type: o.offertype,
+  }));
+
+  return {
+    secid: id,
+    description,
+    issuerId: description.EMITTER_ID || null,
+    coupons,
+    amortizations,
+    offers,
+    boards: bonds,
+    mainBoard,
+    hasDefault: description.HASDEFAULT === 1 || description.HASDEFAULT === '1',
+    hasTechDefault: description.HASTECHNICALDEFAULT === 1 || description.HASTECHNICALDEFAULT === '1',
+    couponFrequency: description.COUPONFREQUENCY != null ? +description.COUPONFREQUENCY : null,
+    daysToRedemption: description.DAYSTOREDEMPTION != null ? +description.DAYSTOREDEMPTION : null,
+    isQualified: description.ISQUALIFIEDINVESTORS === 1 || description.ISQUALIFIEDINVESTORS === '1',
+    typename: description.TYPENAME,
+    issueName: description.NAME,
+    issueDate: description.ISSUEDATE,
+    shortname: description.SHORTNAME,
+  };
+}
+
+/* ── эмитент ─────────────────────────────────────────────────────── */
+
+/** Формальное имя/ИНН эмитента по ISIN (1 запрос). */
+export async function fetchIssuerInfo(secidOrIsin) {
+  try {
+    const d = await iss('/securities.json', { q: secidOrIsin });
+    const row = (d.securities || [])[0];
+    if (!row) return null;
+    return {
+      id: row.emitent_id,
+      title: row.emitent_title,
+      inn: row.emitent_inn,
+      name: row.name,
+      shortname: row.shortname,
+    };
+  } catch { return null; }
+}
+
+/** Облигации эмитента из уже загруженного списка (без доп. запросов). */
+export function bondsOfIssuer(all, key) {
+  if (!key) return [];
+  return all.filter(b => b.issuerKey === key);
+}
+
+/* ── кривая доходности ОФЗ ───────────────────────────────────────── */
 export async function fetchYieldCurve() {
-  const data = await issFetch('/engines/stock/zcyc.json');
-  return data;
+  const d = await iss('/engines/stock/zcyc.json');
+  const years = (d.yearyields || []).map(r => ({
+    period: +r.period,
+    value: r.value != null ? +r.value : null,
+    date: r.tradedate,
+  })).filter(r => r.value != null).sort((a, b) => a.period - b.period);
+  return years;
 }
 
-export async function fetchYearYields() {
-  const data = await issFetch('/engines/stock/zcyc/yearyields.json');
-  return data;
-}
+/* ── индексы ─────────────────────────────────────────────────────── */
 
-// ═══════════════════════════════ Indices ═══════════════════════════════
-export async function fetchIndex(engine = 'stock', market = 'index', board = 'SNDX', secid = 'RGBI') {
-  const data = await issFetch(`/engines/${engine}/markets/${market}/boards/${board}/securities/${secid}.json`);
-  return data;
-}
-
-// ═══════════════════════════════ Issuer bonds by INN ═══════════════════════════════
-export async function fetchIssuerBonds(inn) {
-  const data = await issFetch('/engines/stock/markets/bonds/boards/TQCB/securities.json', {
-    q: inn, limit: 100,
-    'securities.columns': 'secid,shortname,isin,is_traded,listlevel,matdate'
+/** История индекса (RGBI, MCFTR, IMOEX...). */
+export async function fetchIndexHistory(secid, { from, till } = {}) {
+  const d = await iss(`/history/engines/stock/markets/index/securities/${secid}.json`, {
+    from: from || defaultFrom(120),
+    till,
   });
-  return data.securities || [];
+  return (d.history || []).map(r => ({
+    date: r.TRADEDATE,
+    close: r.CLOSE != null ? +r.CLOSE : null,
+    open: r.OPEN != null ? +r.OPEN : null,
+    high: r.HIGH != null ? +r.HIGH : null,
+    low: r.LOW != null ? +r.LOW : null,
+    value: r.VALUE != null ? +r.VALUE : null,
+    yield: r.YIELD != null ? +r.YIELD : null,
+    duration: r.DURATION != null ? +r.DURATION : null,
+    capitalization: r.CAPITALIZATION != null ? +r.CAPITALIZATION : null,
+    name: r.SHORTNAME || r.NAME,
+  }));
 }
 
-export async function searchIssuer(name) {
-  const data = await issFetch('/engines/stock/markets/bonds/boards/TQCB/securities.json', {
-    q: name, limit: 20,
-    'securities.columns': 'secid,emitent_inn,emitent_title,shortname'
-  });
-  return data.securities || [];
+function defaultFrom(daysAgo) {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return d.toISOString().slice(0, 10);
 }
 
-// ═══════════════════════════════ Stocks ═══════════════════════════════
+/* ── акции ───────────────────────────────────────────────────────── */
 export async function fetchStocks() {
-  const data = await issFetch('/engines/stock/markets/shares/boards/TQBR/securities.json', { limit: 300 });
-  return data.securities || [];
+  const d = await iss('/engines/stock/markets/shares/boards/TQBR/securities.json');
+  const S = d.securities || [];
+  const M = new Map((d.marketdata || []).map(r => [r.SECID, r]));
+  return S.map(s => {
+    const m = M.get(s.SECID);
+    const price = lastNum(m?.LAST, m?.LCLOSEPRICE, m?.MARKETPRICE, s.PREVPRICE);
+    return {
+      secid: s.SECID,
+      isin: s.ISIN,
+      shortname: s.SHORTNAME,
+      name: s.SECNAME || s.SHORTNAME,
+      latname: s.LATNAME,
+      price,
+      change: m?.LASTCHANGEPRCNT != null ? +m.LASTCHANGEPRCNT : null,
+      lastChange: m?.LASTCHANGE != null ? +m.LASTCHANGE : null,
+      open: m?.OPEN != null ? +m.OPEN : null,
+      low: m?.LOW != null ? +m.LOW : null,
+      high: m?.HIGH != null ? +m.HIGH : null,
+      turnover: m?.VALTODAY != null ? +m.VALTODAY : 0,
+      numTrades: m?.NUMTRADES != null ? +m.NUMTRADES : null,
+      issuesize: s.ISSUESIZE != null ? +s.ISSUESIZE : null,
+      listLevel: s.LISTLEVEL != null ? +s.LISTLEVEL : null,
+      issueSize: s.ISSUESIZE != null ? +s.ISSUESIZE : null,
+      capitalization: (s.ISSUESIZE != null && price != null) ? +s.ISSUESIZE * price : null,
+    };
+  }).filter(s => s.price != null);
 }
 
-// ═══════════════════════════════ Market data (prices) ═══════════════════════════════
-export async function fetchMarketData(secids) {
-  if (!secids.length) return [];
-  const data = await issFetch('/engines/stock/markets/bonds/boards/TQCB/securities.json', {
-    securities: secids.join(','),
-    'iss.only': 'marketdata',
-    'marketdata.columns': 'SECID,LAST,LASTCHANGE,LASTCHANGEPRC, VOLTODAY,VALUE'
-  });
-  return data.marketdata || [];
-}
-
-// ═══════════════════════════════ Key rate (built-in history) ═══════════════════════════════
-export const KS_HISTORY = [
-  ['2025-01-03', 21.0], ['2025-06-09', 20.0], ['2025-07-28', 18.0],
+/* ── ставка ЦБ (история известных решений) ───────────────────────── */
+export const KEY_RATE_HISTORY = [
+  ['2024-10-28', 21.0], ['2025-06-09', 20.0], ['2025-07-28', 18.0],
   ['2025-09-15', 17.0], ['2025-10-27', 16.5], ['2025-12-22', 16.0],
   ['2026-02-16', 15.5], ['2026-03-23', 15.0], ['2026-04-27', 14.5],
   ['2026-06-22', 14.25], ['2026-07-28', 14.0],
 ];
+export const KEY_RATE = KEY_RATE_HISTORY[KEY_RATE_HISTORY.length - 1][1];
 
-export function keyRateAt(dateStr) {
-  if (!dateStr) return 14.0;
-  let v = 14.0;
-  for (const [d, r] of KS_HISTORY) { if (d <= dateStr) v = r; else break; }
-  return v;
-}
+/* ── подборки ────────────────────────────────────────────────────── */
+export const COLLECTIONS = [
+  { slug: 'ofz', title: 'ОФЗ', desc: 'Государственные облигации (площадка TQOB)', test: b => b.isOfz },
+  { slug: 'floatery', title: 'Флоатеры', desc: 'Плавающий купон: ключевая ставка, RUONIA, ИПЦ', test: b => b.couponKind === 'float' },
+  { slug: 'valyutnye', title: 'Валютные', desc: 'Номинал в долларах, евро, юанях, франках', test: b => b.isCurrency },
+  { slug: 'zameshchayushchie', title: 'Замещающие', desc: 'Выпуски с маркером «ЗО» в названии', test: b => /ЗО/.test(b.shortname || '') },
+  { slug: 'vysokodohodnye', title: 'Высокодоходные (ВДО)', desc: 'Доходность от 20% и 3-й уровень листинга', test: b => b.ytm != null && b.ytm >= 20 && b.listLevel === 3 },
+  { slug: 's-ofertoy', title: 'С офертой', desc: 'Досрочный выкуп (put)', test: b => b.hasOffer },
+  { slug: 'ezhemesyachnyy-kupon', title: 'Ежемесячный купон', desc: 'Выплаты каждые 30 дней', test: b => b.couponPeriod != null && b.couponPeriod >= 25 && b.couponPeriod <= 40 },
+  { slug: 's-amortizaciey', title: 'С амортизацией', desc: 'Возврат номинала частями', test: b => b.isAmort },
+  { slug: 'subord', title: 'Субординированные', desc: 'Младший долг банков', test: b => /суборд|СУБ/i.test(b.shortname + ' ' + (b.bondType || '')) },
+  { slug: 'korotkie', title: 'Короткие (до 1 года)', desc: 'Погашение в течение года', test: b => b.matDate && daysUntil(b.matDate) <= 365 && daysUntil(b.matDate) > 0 },
+  { slug: 'dlinnye', title: 'Длинные (от 7 лет)', desc: 'Долгий срок до погашения', test: b => b.matDate && daysUntil(b.matDate) >= 2555 },
+  { slug: 'struct', title: 'Структурные', desc: 'Структурные облигации', test: b => b.couponKind === 'struct' },
+  { slug: 'list1', title: '1 уровень листинга', desc: 'Максимальные требования биржи', test: b => b.listLevel === 1 },
+  { slug: 'fix', title: 'Фиксированный купон', desc: 'Постоянная известная ставка', test: b => b.couponKind === 'fix' },
+  { slug: 'stoimost-do-90', title: 'Цена ниже 90%', desc: 'Глубокий дисконт к номиналу', test: b => b.price != null && b.price < 90 },
+  { slug: 'bez-oferty', title: 'Без оферты', desc: 'Только до погашения', test: b => !b.hasOffer },
+];
 
-export const KEY_RATE = 14.0;
-
-// ═══════════════════════════════ Helper: parse ISS columns ═══════════════════════════════
-export function parseIssRows(data) {
-  if (!data || !Array.isArray(data)) return [];
-  // ISS returns [{columns:[...]}, {data:[[...], ...]}]
-  // or directly array of objects
-  if (data.columns && data.data) {
-    const cols = data.columns.map(c => c.name || c);
-    return (data.data || []).map(row => {
-      const obj = {};
-      cols.forEach((col, i) => { obj[col] = row[i]; });
-      return obj;
-    });
-  }
-  return data;
+export function daysUntil(dateStr) {
+  if (!dateStr) return Infinity;
+  const d = new Date(dateStr + 'T00:00:00');
+  return Math.round((d - new Date()) / 86400000);
 }

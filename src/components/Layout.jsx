@@ -1,62 +1,80 @@
-import { NavLink } from 'react-router-dom';
-import './../styles/theme.css';
+import { NavLink, useLocation } from 'react-router-dom';
 
-const navItems = [
-  { to: '/', icon: '📊', label: 'Главная' },
-  { to: '/screener', icon: '🔍', label: 'Скринер' },
-  { to: '/collections', icon: '📂', label: 'Подборки' },
-  { to: '/stocks', icon: '📈', label: 'Акции' },
-];
+/* ── Боковое меню в стиле bondradar (242px, секции, акцентная полоса) ── */
 
-const proItems = [
-  { to: '/portfolio', icon: '💼', label: 'Мой портфель' },
-  { to: '/favorites', icon: '⭐', label: 'Избранное' },
-  { to: '/calendar', icon: '📅', label: 'Календарь' },
+const SECTIONS = [
+  {
+    title: 'Инструменты',
+    items: [
+      { to: '/', icon: '◉', label: 'Главная', end: true },
+      { to: '/screener', icon: '☰', label: 'Скринер облигаций' },
+      { to: '/issuers', icon: '▣', label: 'Эмитенты' },
+      { to: '/stocks', icon: '◈', label: 'Акции Мосбиржи' },
+      { to: '/calendar', icon: '▤', label: 'Календарь событий' },
+    ],
+  },
+  {
+    title: 'Подборки',
+    items: [
+      { to: '/collections/ofz', icon: '◆', label: 'ОФЗ' },
+      { to: '/collections/floatery', icon: '◆', label: 'Флоатеры' },
+      { to: '/collections/valyutnye', icon: '◆', label: 'Валютные' },
+      { to: '/collections/zameshchayushchie', icon: '◆', label: 'Замещающие' },
+      { to: '/collections/vysokodohodnye', icon: '◆', label: 'Высокодоходные' },
+      { to: '/collections/s-ofertoy', icon: '◆', label: 'С офертой' },
+      { to: '/collections', icon: '▦', label: 'Все подборки' },
+    ],
+  },
+  {
+    title: 'Личное',
+    items: [
+      { to: '/portfolio', icon: '▥', label: 'Мой портфель' },
+      { to: '/favorites', icon: '★', label: 'Избранное' },
+    ],
+  },
 ];
 
 export default function Layout({ children, theme, setTheme }) {
+  const loc = useLocation();
+
   return (
-    <div className="app-layout">
-      <nav className="sidebar">
-        <NavLink to="/" className="sidebar-logo" onClick={e => e.preventDefault()}>
-          📉 BondRadar
+    <div className="app">
+      <nav className="side">
+        <NavLink to="/" className="logo">
+          <span className="dot" />
+          БондРадар
         </NavLink>
 
-        <div className="sidebar-section">Разделы</div>
-        {navItems.map(item => (
-          <NavLink key={item.to} to={item.to} end={item.to === '/'}
-            className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-            <span>{item.icon}</span> {item.label}
-          </NavLink>
-        ))}
-
-        <div className="sidebar-section">Личное</div>
-        {proItems.map(item => (
-          <NavLink key={item.to} to={item.to}
-            className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-            <span>{item.icon}</span> {item.label}
-          </NavLink>
-        ))}
-
-        <div style={{ marginTop: 'auto', paddingTop: 16 }}>
-          <div style={{ display: 'flex', gap: 4, padding: '0 12px' }}>
-            <button onClick={() => setTheme('light')}
-              style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: theme === 'light' ? 'var(--surface)' : 'var(--bg)', color: 'var(--text)', fontSize: 11, cursor: 'pointer' }}>
-              ☀️ Светлая
-            </button>
-            <button onClick={() => setTheme('dark')}
-              style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: theme === 'dark' ? 'var(--surface)' : 'var(--bg)', color: 'var(--text)', fontSize: 11, cursor: 'pointer' }}>
-              🌙 Тёмная
-            </button>
+        {SECTIONS.map(sec => (
+          <div key={sec.title}>
+            <div className="side-sec">{sec.title}</div>
+            {sec.items.map(it => (
+              <NavLink
+                key={it.to}
+                to={it.to}
+                end={it.end}
+                className={({ isActive }) => 'ni' + (isActive ? ' on' : '')}
+              >
+                <span className="ico">{it.icon}</span>
+                {it.label}
+              </NavLink>
+            ))}
           </div>
-          <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', marginTop: 8 }}>
-            Данные MOEX · обновление при загрузке
+        ))}
+
+        <div className="side-foot">
+          <div className="theme-sw">
+            <button className={theme === 'light' ? 'on' : ''} onClick={() => setTheme('light')}>Светлая</button>
+            <button className={theme === 'dark' ? 'on' : ''} onClick={() => setTheme('dark')}>Тёмная</button>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', marginTop: 9, lineHeight: 1.5 }}>
+            Данные Московской биржи<br />
+            <span className="mono">{loc.pathname}</span>
           </div>
         </div>
       </nav>
-      <main className="main-content">
-        {children}
-      </main>
+
+      <main className="main">{children}</main>
     </div>
   );
 }

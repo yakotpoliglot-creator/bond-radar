@@ -1,239 +1,374 @@
-import { useState, useEffect, useMemo } from 'react';
-import { fetchAllBondsFull } from '../api/moex';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { fetchBonds, COLLECTIONS, COUPON_LABEL, daysUntil } from '../api/moex';
+import { BondTable, DEFAULT_COLS, Pager, Loading, ErrorBox, Panel, Kpi } from '../components/ui';
+import { nf } from '../lib/format';
+import { useFavorites } from '../lib/store';
 
-/* ═══════════════════════════════════════════════════════════
-   Screener Page — Bond screener with filters
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   Скринер облигаций — все выпуски основного режима TQCB (≈3033 шт).
+   Данные: fetchBonds() → iss.moex.com. Сортировка — внутри BondTable.
+   ═══════════════════════════════════════════════════════════════════ */
 
-function ytmColor(ytm) {
-  if (ytm == null) return 'var(--text3)';
-  const v = parseFloat(ytm);
-  if (v > 30) return 'var(--red)';
-  if (v > 18) return 'var(--amber)';
-  if (v > 10) return 'var(--text)';
-  return 'var(--green)';
+const PER_PAGE = 50;
+
+/* Корзины по сроку до погашения: [днейОт, днейДо] */
+const MATURITY = {
+  all: null,
+  lt1: [0, 365],        // до 1 года
+  '1-3': [365, 1095],   // 1–3 года
+  '3-5': [1095, 1825],  // 3–5 лет
+  '5+': [1825, Infinity],
+};
+
+const MATURITY_LABEL = {
+  all: 'Все',
+  lt1: 'до 1 года',
+  '1-3': '1–3 года',
+  '3-5': '3–5 лет',
+  '5+': '5+ лет',
+};
+
+/* Значения фильтров по умолчанию (hideAnomaly включён по требованию) */
+const EMPTY_FILTERS = {
+  search: '',
+  ytmMin: '',
+  ytmMax: '',
+  kind: 'all',
+  level: 'all',
+  maturity: 'all',
+  turnoverMin: '',
+  hideAnomaly: true,
+};
+
+/* ── Проверка одной бумаги по всем фильтрам (кроме аномальной доходности) ── */
+function matchFilters(b, f) {
+  // Поиск по названию / ISIN / SECID
+  if (f.search) {
+    const q = f.search.trim().toLowerCase();
+    if (q) {
+      const hit =
+        (b.shortname || '').toLowerCase().includes(q) ||
+        (b.name || '').toLowerCase().includes(q) ||
+        (b.isin || '').toLowerCase().includes(q) ||
+        (b.secid || '').toLowerCase().includes(q);
+      if (!hit) return false;
+    }
+  }
+
+  // YTM от / до — бумаги с недостоверной доходностью диапазон не проходят
+  const min = f.ytmMin === '' ? null : +f.ytmMin;
+  const max = f.ytmMax === '' ? null : +f.ytmMax;
+  if (min != null || max != null) {
+    if (b.ytm == null) return false;
+    if (min != null && !Number.isNaN(min) && b.ytm < min) return false;
+    if (max != null && !Number.isNaN(max) && b.ytm > max) return false;
+  }
+
+  // Тип купона
+  if (f.kind !== 'all' && b.couponKind !== f.kind) return false;
+
+  // Уровень листинга
+  if (f.level !== 'all' && String(b.listLevel) !== f.level) return false;
+
+  // Срок до погашения (через daysUntil; бумаги без даты погашения не проходят)
+  const range = MATURITY[f.maturity];
+  if (range) {
+    if (!b.matDate) return false;
+    const d = daysUntil(b.matDate);
+    if (!(d > range[0] && d <= range[1])) return false;
+  }
+
+  // Оборот от, ₽ — отсекаем неликвид
+  if (f.turnoverMin !== '') {
+    const t = +f.turnoverMin;
+    if (!Number.isNaN(t) && (b.turnover || 0) < t) return false;
+  }
+
+  return true;
 }
 
-function couponType(r) {
-  const t = (r.BONDTYPE || '').toLowerCase();
-  const d = (r.COUPON_DETAILS || '').toLowerCase();
-  if (t.includes('плава')) return 'Флоатер';
-  if (t.includes('перемен') || d.includes('ключевая') || d.includes('руония') || d.includes('ruonia') || d.includes('ипц')) return 'Флоатер';
-  if (t.includes('дисконт')) return 'Дисконт';
-  if (t.includes('структур')) return 'Структурная';
-  if (t.includes('суборд')) return 'Суборд';
-  if (t.includes('фиксир') || t.includes('известн')) return 'Фикс';
-  return r.BONDTYPE || '—';
-}
+export default function Screener() {
+  const loc = useLocation();
+  const nav = useNavigate();
+  const { list: favList } = useFavorites();
 
-function listLevelClass(lv) {
-  if (lv === 1) return 'badge-green';
-  if (lv === 2) return 'badge-amber';
-  if (lv === 3) return 'badge-red';
-  return 'badge-amber';
-}
-
-function ratingClass(rating) {
-  if (!rating) return null;
-  const r = rating.toUpperCase();
-  if (r.startsWith('AAA') || r.startsWith('AA')) return 'green';
-  if (r.startsWith('A') || r.startsWith('BBB')) return '';
-  if (r.startsWith('BB') || r.startsWith('B')) return 'amber';
-  return 'red';
-}
-
-export default function ScreenerPage() {
   const [bonds, setBonds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filters, setFilters] = useState({
-    ytmMin: '', ytmMax: '',
-    couponType: 'all',
-    rating: 'all',
-    listLevel: 'all',
-    search: '',
-  });
-  const [sortCol, setSortCol] = useState('YIELDATPREVWAPRICE');
-  const [sortAsc, setSortAsc] = useState(false);
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [onlyFav, setOnlyFav] = useState(false);   // доп. фильтр «только избранное»
+  const [page, setPage] = useState(1);
 
-  useEffect(() => { loadData(); }, []);
-
-  async function loadData() {
-    setLoading(true); setError(null);
+  /* ── загрузка данных MOEX ── */
+  const load = useCallback(async (force = false) => {
+    setLoading(true);
+    setError(null);
     try {
-      const data = await fetchAllBondsFull();
+      const data = await fetchBonds({ force });
       setBonds(data);
     } catch (e) {
-      setError(e.message);
+      setError(e?.message || String(e));
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  const filtered = useMemo(() => {
-    let result = bonds;
-    // Filter by YTM
-    if (filters.ytmMin) {
-      result = result.filter(b => {
-        const y = parseFloat(b.YIELDATPREVWAPRICE);
-        return !isNaN(y) && y >= parseFloat(filters.ytmMin);
-      });
-    }
-    if (filters.ytmMax) {
-      result = result.filter(b => {
-        const y = parseFloat(b.YIELDATPREVWAPRICE);
-        return !isNaN(y) && y <= parseFloat(filters.ytmMax);
-      });
-    }
-    // Filter by coupon type
-    if (filters.couponType !== 'all') {
-      result = result.filter(b => couponType(b) === filters.couponType);
-    }
-    // Filter by list level
-    if (filters.listLevel !== 'all') {
-      result = result.filter(b => String(b.LISTLEVEL) === filters.listLevel);
-    }
-    // Search by name/ISIN
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
-      result = result.filter(b =>
-        (b.SHORTNAME || '').toLowerCase().includes(q) ||
-        (b.SECID || '').toLowerCase().includes(q) ||
-        (b.ISIN || '').toLowerCase().includes(q)
-      );
-    }
-    // Sort
-    result = [...result].sort((a, b) => {
-      const av = a[sortCol], bv = b[sortCol];
-      if (av == null) return 1; if (bv == null) return -1;
-      const cmp = typeof av === 'string'
-        ? av.localeCompare(bv)
-        : parseFloat(av) - parseFloat(bv);
-      return sortAsc ? cmp : -cmp;
-    });
-    return result;
-  }, [bonds, filters, sortCol, sortAsc]);
+  useEffect(() => { load(false); }, [load]);
 
-  function handleSort(col) {
-    if (sortCol === col) setSortAsc(!sortAsc);
-    else { setSortCol(col); setSortAsc(false); }
-  }
+  /* ── подборка из hash-роутинга: #/screener?cat=<slug> ── */
+  const catSlug = new URLSearchParams(loc.search).get('cat');
+  const collection = useMemo(
+    () => COLLECTIONS.find(c => c.slug === catSlug) || null,
+    [catSlug],
+  );
 
-  function sortArrow(col) {
-    if (sortCol !== col) return '';
-    return sortAsc ? ' ↑' : ' ↓';
-  }
+  /* ── фильтрация ── */
+  const { rows, hiddenAnomaly } = useMemo(() => {
+    const out = [];
+    let hidden = 0;
+    for (const b of bonds) {
+      // фильтр подборки
+      if (collection && !collection.test(b)) continue;
+      // только избранное
+      if (onlyFav && !favList.includes(b.isin)) continue;
+      // остальные фильтры
+      if (!matchFilters(b, filters)) continue;
+      // аномальная доходность (ytm == null при «битом» ytmRaw)
+      if (b.ytm == null) {
+        if (filters.hideAnomaly) { hidden++; continue; }
+      }
+      out.push(b);
+    }
+    return { rows: out, hiddenAnomaly: hidden };
+  }, [bonds, filters, collection, onlyFav, favList]);
 
-  if (loading) return <div className="loading">Загрузка данных с Московской биржи...</div>;
-  if (error) return <div className="error">Ошибка: {error}</div>;
+  // при смене фильтров/подборки возвращаемся на первую страницу
+  useEffect(() => { setPage(1); }, [filters, collection, onlyFav]);
+
+  const pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+  const cur = Math.min(page, pages);
+  const slice = useMemo(
+    () => rows.slice((cur - 1) * PER_PAGE, cur * PER_PAGE),
+    [rows, cur],
+  );
+
+  const avgYtm = useMemo(() => {
+    const vals = rows.map(b => b.ytm).filter(v => v != null);
+    if (!vals.length) return null;
+    return vals.reduce((s, v) => s + v, 0) / vals.length;
+  }, [rows]);
+
+  const set = patch => setFilters(f => ({ ...f, ...patch }));
+  const reset = () => { setFilters(EMPTY_FILTERS); setOnlyFav(false); setPage(1); };
+
+  if (loading && !bonds.length) return <Loading />;
+  if (error && !bonds.length) return <ErrorBox error={error} onRetry={() => load(true)} />;
 
   return (
     <div>
-      <div className="page-header">
-        <div className="page-title">🔍 Скринер облигаций</div>
-        <div className="page-subtitle">
-          {bonds.length} выпусков на Мосбирже · показано {filtered.length}
-          <button className="btn" style={{ marginLeft: 12 }} onClick={loadData}>🔄 Обновить</button>
+      {/* ── Заголовок: честно показываем, сколько записей прошло фильтр ── */}
+      <div className="page-h">
+        <div className="page-t">☰ Скринер облигаций</div>
+        <div className="page-s">
+          показано <b>{rows.length}</b> из <b>{bonds.length}</b> выпусков
+          {collection && <> · подборка «{collection.title}»</>}
+          <button
+            className="btn btn-sm"
+            style={{ marginLeft: 10 }}
+            onClick={() => load(true)}
+            disabled={loading}
+          >
+            {loading ? 'Обновление…' : '↻ Обновить'}
+          </button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="filters-bar">
-        <div className="filter-group">
-          <span className="filter-label">Поиск</span>
-          <input className="filter-input" placeholder="Название / ISIN" value={filters.search}
-            onChange={e => setFilters(f => ({ ...f, search: e.target.value }))} />
-        </div>
-        <div className="filter-group">
-          <span className="filter-label">YTM от</span>
-          <input className="filter-input" type="number" step="0.1" placeholder="0" value={filters.ytmMin}
-            onChange={e => setFilters(f => ({ ...f, ytmMin: e.target.value }))} />
-        </div>
-        <div className="filter-group">
-          <span className="filter-label">YTM до</span>
-          <input className="filter-input" type="number" step="0.1" placeholder="100" value={filters.ytmMax}
-            onChange={e => setFilters(f => ({ ...f, ytmMax: e.target.value }))} />
-        </div>
-        <div className="filter-group">
-          <span className="filter-label">Тип купона</span>
-          <select className="filter-select" value={filters.couponType}
-            onChange={e => setFilters(f => ({ ...f, couponType: e.target.value }))}>
-            <option value="all">Все</option>
-            <option value="Фикс">Фикс</option>
-            <option value="Флоатер">Флоатер</option>
-            <option value="Дисконт">Дисконт</option>
-            <option value="Суборд">Суборд</option>
-          </select>
-        </div>
-        <div className="filter-group">
-          <span className="filter-label">Уровень листинга</span>
-          <select className="filter-select" value={filters.listLevel}
-            onChange={e => setFilters(f => ({ ...f, listLevel: e.target.value }))}>
-            <option value="all">Все</option>
-            <option value="1">1 уровень</option>
-            <option value="2">2 уровень</option>
-            <option value="3">3 уровень</option>
-          </select>
-        </div>
+      {/* ── Плашка активной подборки из ссылки ── */}
+      {catSlug && (
+        collection ? (
+          <div className="filters" style={{ marginBottom: 12, alignItems: 'center' }}>
+            <span className="tag b" style={{ padding: '5px 10px', fontSize: 11.5 }}>
+              Подборка: {collection.title}
+            </span>
+            <button className="btn btn-sm" onClick={() => nav('/screener')}>Снять</button>
+          </div>
+        ) : (
+          <div className="err" style={{ textAlign: 'left', padding: '8px 0 12px' }}>
+            Подборка «{catSlug}» не найдена — фильтр по ней не применён.
+            <button className="btn btn-sm" style={{ marginLeft: 10 }} onClick={() => nav('/collections')}>
+              Все подборки
+            </button>
+          </div>
+        )
+      )}
+
+      {/* ── Сводка ── */}
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 12 }}>
+        <Kpi label="Всего выпусков" value={bonds.length} sub="режим TQCB, MOEX" />
+        <Kpi label="Отфильтровано" value={rows.length} sub={bonds.length ? nf(rows.length / bonds.length * 100, 1) + '% от рынка' : ''} />
+        <Kpi label="Средняя доходность" value={avgYtm == null ? '—' : nf(avgYtm, 2) + '%'} sub="по выборке" />
       </div>
 
-      {/* Table */}
-      <div style={{ overflowX: 'auto' }}>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th onClick={() => handleSort('SHORTNAME')}>Название{sortArrow('SHORTNAME')}</th>
-              <th onClick={() => handleSort('YIELDATPREVWAPRICE')}>YTM{sortArrow('YIELDATPREVWAPRICE')}</th>
-              <th onClick={() => handleSort('COUPONPERCENT')}>Купон{sortArrow('COUPONPERCENT')}</th>
-              <th onClick={() => handleSort('PREVPRICE')}>Цена{sortArrow('PREVPRICE')}</th>
-              <th onClick={() => handleSort('ACCRUEDINT')}>НКД{sortArrow('ACCRUEDINT')}</th>
-              <th onClick={() => handleSort('MATDATE')}>Погашение{sortArrow('MATDATE')}</th>
-              <th>Тип</th>
-              <th onClick={() => handleSort('LISTLEVEL')}>Листинг{sortArrow('LISTLEVEL')}</th>
-              <th onClick={() => handleSort('PREVLEGALCLOSEPRICE')}>Закр.{sortArrow('PREVLEGALCLOSEPRICE')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.slice(0, 200).map(b => (
-              <tr key={b.SECID}>
-                <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  <div style={{ fontWeight: 500 }}>{b.SHORTNAME}</div>
-                  <div className="mono text3">{b.ISIN}</div>
-                </td>
-                <td style={{ color: ytmColor(b.YIELDATPREVWAPRICE), fontWeight: 600 }}>
-                  {b.YIELDATPREVWAPRICE != null ? parseFloat(b.YIELDATPREVWAPRICE).toFixed(2) + '%' : '—'}
-                </td>
-                <td>
-                  {b.COUPONPERCENT != null ? parseFloat(b.COUPONPERCENT).toFixed(2) + '%' : '—'}
-                </td>
-                <td className="mono">
-                  {b.PREVPRICE != null ? parseFloat(b.PREVPRICE).toFixed(2) : '—'}
-                </td>
-                <td className="mono text3">
-                  {b.ACCRUEDINT != null ? parseFloat(b.ACCRUEDINT).toFixed(2) : '—'}
-                </td>
-                <td className="mono" style={{ fontSize: 12 }}>
-                  {b.MATDATE && b.MATDATE !== '0000-00-00' ? new Date(b.MATDATE).toLocaleDateString('ru', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                </td>
-                <td>
-                  <span className="badge badge-green">{couponType(b)}</span>
-                </td>
-                <td>
-                  <span className={`badge ${listLevelClass(b.LISTLEVEL)}`}>{b.LISTLEVEL || '—'}</span>
-                </td>
-                <td className="mono">
-                  {b.PREVLEGALCLOSEPRICE != null ? parseFloat(b.PREVLEGALCLOSEPRICE).toFixed(2) : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filtered.length > 200 && (
-          <div style={{ textAlign: 'center', padding: 16, color: 'var(--text3)' }}>
-            Показаны первые 200 из {filtered.length}. Поиск сужает выборку.
+      {/* ── Фильтры ── */}
+      <Panel title="Фильтры" style={{ marginBottom: 12 }}>
+        <div className="filters">
+          <div className="fg">
+            <label>Поиск</label>
+            <input
+              className="inp"
+              style={{ width: 220 }}
+              placeholder="Название / ISIN / SECID"
+              value={filters.search}
+              onChange={e => set({ search: e.target.value })}
+            />
+          </div>
+
+          <div className="fg">
+            <label>YTM от, %</label>
+            <input
+              className="inp"
+              style={{ width: 90 }}
+              type="number"
+              step="0.1"
+              placeholder="0"
+              value={filters.ytmMin}
+              onChange={e => set({ ytmMin: e.target.value })}
+            />
+          </div>
+
+          <div className="fg">
+            <label>YTM до, %</label>
+            <input
+              className="inp"
+              style={{ width: 90 }}
+              type="number"
+              step="0.1"
+              placeholder="300"
+              value={filters.ytmMax}
+              onChange={e => set({ ytmMax: e.target.value })}
+            />
+          </div>
+
+          <div className="fg">
+            <label>Тип купона</label>
+            <select className="sel" value={filters.kind} onChange={e => set({ kind: e.target.value })}>
+              <option value="all">Все</option>
+              {Object.entries(COUPON_LABEL)
+                .filter(([k]) => k !== 'other')
+                .map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            </select>
+          </div>
+
+          <div className="fg">
+            <label>Уровень листинга</label>
+            <select className="sel" value={filters.level} onChange={e => set({ level: e.target.value })}>
+              <option value="all">Все</option>
+              <option value="1">1 уровень</option>
+              <option value="2">2 уровень</option>
+              <option value="3">3 уровень</option>
+            </select>
+          </div>
+
+          <div className="fg">
+            <label>Срок до погашения</label>
+            <select className="sel" value={filters.maturity} onChange={e => set({ maturity: e.target.value })}>
+              {Object.entries(MATURITY_LABEL).map(([k, label]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="fg">
+            <label>Оборот от, ₽</label>
+            <input
+              className="inp"
+              style={{ width: 130 }}
+              type="number"
+              step="1000"
+              placeholder="например 1 000 000"
+              value={filters.turnoverMin}
+              onChange={e => set({ turnoverMin: e.target.value })}
+            />
+          </div>
+
+          <div className="fg">
+            <label>Достоверность</label>
+            <label
+              title="У части выпусков MOEX отдаёт битую доходность (значение вне допустимого диапазона −50…300 %). Такие бумаги показываются как «н/д» и по умолчанию исключены из выборки, чтобы не портить сортировку и средние."
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, minHeight: 30,
+                fontSize: 12, fontWeight: 400, textTransform: 'none',
+                letterSpacing: 0, color: 'var(--text2)', cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={filters.hideAnomaly}
+                onChange={e => set({ hideAnomaly: e.target.checked })}
+                style={{ accentColor: 'var(--accent)', width: 14, height: 14 }}
+              />
+              Скрыть аномальную доходность
+            </label>
+          </div>
+
+          <div className="fg">
+            <label>Личное</label>
+            <button
+              className={'chip' + (onlyFav ? ' on' : '')}
+              style={{ minHeight: 30 }}
+              onClick={() => setOnlyFav(v => !v)}
+              title="Оставить только бумаги из избранного"
+            >
+              ★ Избранное ({favList.length})
+            </button>
+          </div>
+
+          <div className="fg">
+            <label>&nbsp;</label>
+            <button className="btn" onClick={reset}>Сбросить фильтры</button>
+          </div>
+        </div>
+
+        {/* Сноска про скрытые «битые» доходности */}
+        {filters.hideAnomaly && hiddenAnomaly > 0 && (
+          <div className="kpi-s" style={{ marginTop: 10 }}>
+            Скрыто {hiddenAnomaly} вып. с недостоверной доходностью — снимите галочку, чтобы показать их.
           </div>
         )}
-      </div>
+        {error && bonds.length > 0 && (
+          <div className="err" style={{ textAlign: 'left', paddingTop: 10 }}>
+            Обновление не удалось: {String(error)}
+          </div>
+        )}
+      </Panel>
+
+      {/* ── Таблица + пагинация ── */}
+      <Panel
+        pad={false}
+        title={`Результаты · стр. ${cur} из ${pages}`}
+        right={<span className="kpi-s">{rows.length} шт. по фильтру · по {PER_PAGE} на страницу</span>}
+      >
+        {!rows.length ? (
+          <div className="empty">
+            Под фильтры не попал ни один выпуск из {bonds.length}.
+            <div style={{ marginTop: 10 }}>
+              <button className="btn" onClick={reset}>Сбросить фильтры</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <BondTable bonds={slice} cols={DEFAULT_COLS} />
+            <Pager
+              page={cur}
+              pages={pages}
+              onChange={setPage}
+              total={rows.length}
+              perPage={PER_PAGE}
+            />
+          </>
+        )}
+      </Panel>
     </div>
   );
 }
