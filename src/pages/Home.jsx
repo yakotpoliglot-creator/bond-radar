@@ -219,6 +219,12 @@ export default function Home() {
 
   const keyRateDate = KEY_RATE_HISTORY[KEY_RATE_HISTORY.length - 1][0];
 
+  /* Ключевая ставка приходит живым индексом KEYRATE с Московской биржи.
+     Зашитая константа остаётся только запасным вариантом на случай,
+     если биржа этот индекс не отдаст. */
+  const liveRate = rates?.KEYRATE?.value ?? KEY_RATE;
+  const liveRateDate = rates?.KEYRATE?.date || keyRateDate;
+
   /* ── Топ-10 по обороту для таблицы ──────────────────────────────── */
   const topTurnover = useMemo(() => {
     if (!bonds) return [];
@@ -264,7 +270,7 @@ export default function Home() {
     const values = curve.map(d => d.value);
     const lo = Math.min(...values);
     const hi = Math.max(...values);
-    const showKeyRate = KEY_RATE >= lo - 2 && KEY_RATE <= hi + 2;
+    const showKeyRate = liveRate >= lo - 2 && liveRate <= hi + 2;
 
     const datasets = [{
       label: 'Кривая ОФЗ',
@@ -282,8 +288,8 @@ export default function Home() {
     if (showKeyRate) {
       const xs = curve.map(d => d.period);
       datasets.push({
-        label: `Ключевая ставка ${nf(KEY_RATE, 2)}%`,
-        data: [{ x: Math.min(...xs), y: KEY_RATE }, { x: Math.max(...xs), y: KEY_RATE }],
+        label: `Ключевая ставка ${nf(liveRate, 2)}%`,
+        data: [{ x: Math.min(...xs), y: liveRate }, { x: Math.max(...xs), y: liveRate }],
         borderColor: p.red,
         borderWidth: 1.5,
         borderDash: [6, 4],
@@ -507,7 +513,7 @@ export default function Home() {
         <div>
           <div className="page-t">Обзор рынка облигаций</div>
           <div className="page-s">
-            Ключевая ставка {nf(KEY_RATE, 2)}% · {bonds ? nf(bonds.length, 0) : '—'} выпусков в базе · данные MOEX ISS
+            Ключевая ставка {nf(liveRate, 2)}% · {bonds ? nf(bonds.length, 0) : '—'} выпусков в базе · данные MOEX ISS
           </div>
         </div>
         <button className="btn" onClick={load}>Обновить</button>
@@ -517,7 +523,7 @@ export default function Home() {
       <div style={kpiGrid}>
         <Kpi
           label="Ключевая ставка ЦБ"
-          value={nf(KEY_RATE, 2) + '%'}
+          value={nf(liveRate, 2) + '%'}
           sub={'с ' + dateShort(keyRateDate)}
         />
         <Kpi
