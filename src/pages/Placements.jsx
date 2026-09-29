@@ -92,8 +92,8 @@ export default function Placements() {
       {/* ── Сводка ────────────────────────────────────────────────── */}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 14 }}>
         <Kpi label="Анонсов в ленте" value={rows.length} sub="все размещения, не только облигации" />
-        <Kpi label="Свежий анонс" value={latest ? fmtDateTime(latest).split(',')[0] : '—'} sub={latest ? fmtDateTime(latest) : 'нет данных'} />
-        <Kpi label="Лента с" value={oldest ? fmtDateTime(oldest).split(',')[0] : '—'} sub="биржа хранит короткий период" />
+        <Kpi label="Свежий анонс" value={latest ? fmtDateTime(latest) : '—'} sub="последнее сообщение ленты" />
+        <Kpi label="Лента с" value={oldest ? fmtDateTime(oldest) : '—'} sub="биржа хранит короткий период" />
       </div>
 
       {/* ── Список анонсов ────────────────────────────────────────── */}
@@ -120,9 +120,14 @@ export default function Placements() {
               <tbody>
                 {rows.map(n => {
                   const series = seriesOf(n.title);
-                  /* Текст анонса без служебной шапки «О порядке сбора заявок…» */
+                  /* Текст анонса без служебной шапки и без серии —
+                     серия уже вынесена в отдельную колонку. */
                   const body = shortenIssuer(
-                    n.title.replace(/^О порядке сбора заявок и заключения сделок при размещении облигаций\s*/i, ''),
+                    n.title
+                      .replace(/^О порядке сбора заявок и заключения сделок при размещении облигаций\s*/i, '')
+                      .replace(/серии\s+[A-Za-zА-Яа-я0-9_\-]+/i, '')
+                      .replace(/\s+/g, ' ')
+                      .trim(),
                   );
                   return (
                     <tr key={n.id}>
