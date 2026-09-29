@@ -524,7 +524,7 @@ export default function Home() {
         <Kpi
           label="Ключевая ставка ЦБ"
           value={nf(liveRate, 2) + '%'}
-          sub={'с ' + dateShort(keyRateDate)}
+          sub={(rates?.KEYRATE?.value != null ? 'MOEX, ' : 'с ') + dateShort(liveRateDate)}
         />
         <Kpi
           label="Индекс RGBI"
