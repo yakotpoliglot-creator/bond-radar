@@ -1,0 +1,186 @@
+=== Цепочка сертификатов, как её отдаёт сервер
+depth=0 C = RU, ST = Moscow, L = Moscow, O = Analytical Credit Rating Agency, CN = *.acra-ratings.ru
+verify error:num=20:unable to get local issuer certificate
+verify return:1
+depth=0 C = RU, ST = Moscow, L = Moscow, O = Analytical Credit Rating Agency, CN = *.acra-ratings.ru
+verify error:num=21:unable to verify the first certificate
+verify return:1
+depth=0 C = RU, ST = Moscow, L = Moscow, O = Analytical Credit Rating Agency, CN = *.acra-ratings.ru
+verify return:1
+CONNECTED(00000003)
+---
+Certificate chain
+ 0 s:C = RU, ST = Moscow, L = Moscow, O = Analytical Credit Rating Agency, CN = *.acra-ratings.ru
+   i:C = BE, O = GlobalSign nv-sa, CN = GlobalSign RSA OV SSL CA 2018
+   a:PKEY: rsaEncryption, 2048 (bit); sigalg: RSA-SHA256
+   v:NotBefore: Mar 19 15:06:48 2026 GMT; NotAfter: Oct  4 15:06:48 2026 GMT
+---
+Server certificate
+-----BEGIN CERTIFICATE-----
+MIIGqjCCBZKgAwIBAgIMPD4BrkExUk2HOvrzMA0GCSqGSIb3DQEBCwUAMFAxCzAJ
+BgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNhMSYwJAYDVQQDEx1H
+bG9iYWxTaWduIFJTQSBPViBTU0wgQ0EgMjAxODAeFw0yNjAzMTkxNTA2NDhaFw0y
+NjEwMDQxNTA2NDhaMHUxCzAJBgNVBAYTAlJVMQ8wDQYDVQQIEwZNb3Njb3cxDzAN
+BgNVBAcTBk1vc2NvdzEoMCYGA1UEChMfQW5hbHl0aWNhbCBDcmVkaXQgUmF0aW5n
+IEFnZW5jeTEaMBgGA1UEAwwRKi5hY3JhLXJhdGluZ3MucnUwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQCuX3OsAu1vr+w0ij1wWxwsAJAP4V7dcIjJI5xs
+phDt39U2tQUJRtWgOCrAOjGRo0UHGU/p2FCUp66vMP4UfcH+zBSLKgFSoGGdhbUb
+rmTfivdNHaW+iQTA9sEMgy2FLyydwrcjrXDGd7N57t/5Miyfg+mQaHhlNOUd2QbG
+ZxEtgWUp6ANpcEUaPyF+y7V3ZP2fXE7t7ldaG+/uGsflW4lvyxQ0ClR4MZtikvkl
+QI8Ybd+vXedc0+GNMDp0gPaPb7j+PmEkrpQzh+qh6MSDOauNNSKuVp3/w8bK/dJc
+yRLi9mrtum9WkFJfVTxyLGPStBYktxr317qijYyFeo5mtBOzAgMBAAGjggNdMIID
+WTAOBgNVHQ8BAf8EBAMCBaAwDAYDVR0TAQH/BAIwADCBjgYIKwYBBQUHAQEEgYEw
+fzBEBggrBgEFBQcwAoY4aHR0cDovL3NlY3VyZS5nbG9iYWxzaWduLmNvbS9jYWNl
+cnQvZ3Nyc2FvdnNzbGNhMjAxOC5jcnQwNwYIKwYBBQUHMAGGK2h0dHA6Ly9vY3Nw
+Lmdsb2JhbHNpZ24uY29tL2dzcnNhb3Zzc2xjYTIwMTgwVgYDVR0gBE8wTTBBBgkr
+BgEEAaAyARQwNDAyBggrBgEFBQcCARYmaHR0cHM6Ly93d3cuZ2xvYmFsc2lnbi5j
+b20vcmVwb3NpdG9yeS8wCAYGZ4EMAQICMD8GA1UdHwQ4MDYwNKAyoDCGLmh0dHA6
+Ly9jcmwuZ2xvYmFsc2lnbi5jb20vZ3Nyc2FvdnNzbGNhMjAxOC5jcmwwLQYDVR0R
+BCYwJIIRKi5hY3JhLXJhdGluZ3MucnWCD2FjcmEtcmF0aW5ncy5ydTAdBgNVHSUE
+FjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwHwYDVR0jBBgwFoAU+O9/8s14Z6jeb48k
+jYjxhwMCs+swHQYDVR0OBBYEFEzj4GbkLJBsmxzcibllF9gVRkgEMIIBfwYKKwYB
+
+=== Сколько сертификатов в цепочке
+1
+
+=== Содержимое страниц (curl -k, проверка сертификата отключена)
+
+--- https://www.acra-ratings.ru/
+HTTP 200 | 671200 байт
+title: АКРА
+обозначений рейтинга AAA/AA/A/BBB(RU): 3
+строк таблиц <tr>: 0
+--- фрагмент ---
+ АКРА 
+	 
+	 
+		(function(m,e,t,r,i,k,a){
+			m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+			m[i].l=1*new Date();
+			for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+			k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+		})(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=112112819', 'ym');
+	
+		ym(112112819, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+	 
+	 
+ if(!window.BX)window.BX={};if(!window.BX.message)window.BX.message=function(mess){if(typeof mess==='object'){for(let i in mess) {BX.message[i]=mess[i];} return true;}}; 
+ (window.BX||top.BX).message({'JS_CORE_LOADING':'Загрузка...','JS_CORE_NO_DATA':'- Нет данных -','JS_CORE_WINDOW_CLOSE':'Закрыть','JS_CORE_WINDOW_EXPAND':'Развернуть','JS_CORE_WINDOW_NARROW':'Свернуть в окно','JS_CORE_WINDOW_SAVE':'Сохранить','JS_CORE_WINDOW_CANCEL':'Отменить','JS_CORE_WINDOW_CONTINUE':'Продолжить','JS_CORE_H':'ч','JS_CORE_M':'м','JS_CORE_S':'с','JSADM_AI_HIDE_EXTRA':'Скрыть лишние','JSADM_AI_ALL_NOTIF':'Показать все','JSADM_AUTH_REQ':'Требуется авторизация!','JS_CORE_WINDOW_AUTH':'Войти','JS_CORE_IMAGE_FULL':'Полный размер'}); 
+ 
+ BX.setJSList(['/bitrix/js/main/core/core_ajax.js','/bitrix/js/main/core/core_promise.js','/bitrix/js/main/polyfill/promise/js/promise.js','/bitrix/js/main/loadext/loadext.js','/bitrix/js/main/loadext/extension.js','/bitrix/js/main/polyfill/promise/js/promise.js','/bitrix/js/main/polyfill/find/js/find.js','/bitrix/js/main/polyfill/includes/js/includes.js','/bitrix/js/main/polyfill/matches/js/matches.js','/bitrix/js/ui/polyfill/closest/js/closest.js','/bitrix/js/main/polyfill/fill/main.polyfill.fill.js','/bitrix/js/main/polyfill/find/js/find.js','/bitrix/js/main/polyfill/matches/js/matches.js','/bitrix/js/main/polyfill/core/dist/polyfill.bundle.js','/bitrix/js/main/core/core.js','/bitrix/js/main/polyfill/intersectionobserver/js/intersectionobserver.js','/bitrix/js/main/lazyload/dist/lazyload.bundle.js','/bitrix/js/main/polyfill/core/dist/polyfill.bundle.js','/bitrix/js/main/parambag/dist/parambag.bundle.js']);
+BX.setCSSList(['/bitrix/js/main/lazyload/dist/lazyload.bundle.css','/bitrix/js/main/parambag/dist/parambag.bundle.css']); 
+ (window.BX||top.BX).message({'LANGUAGE_ID':'ru','FORMAT_DATE':'DD.MM.YYYY','FORMAT_DATETIME':'DD.MM.YYYY HH:MI:SS','COOKIE_PREFIX':'ACRA_T','SERVER_TZ_OFFSET':'10800','UTF_MODE':'Y','SITE_ID':'s1','SITE_DIR':'/','USER_ID':'','SERVER_TIME':'1790758713','USER_TZ_OFFSET':'0','USER_TZ_AUTO':'Y','bitrix_sessid':'43b70f2d3c7b8832f99479a1dbbdfd11'}); 
+ BX.setJSList(['/local/templates/acra/components/bitrix/system.auth.form/desktop/script.js','/static/scripts/lib/jquery/jquery-3.5.1.min.js','/static/scripts/lib/moment/moment.min.js','/static/scripts/lib/slick-1.8.1/slick.min.js','/static/scripts/lib/sticky-js/sticky.min.js','/static/scripts/lib/ion-slider/ion.rangeSlider.min.js','/static/scripts/lib/date-picker/datepicker.min.js','/static/scripts/lib/daterangepicker/daterangepicker.js','/static/scripts/lib/graph/Chart.min.js','/static/scripts/lib/graph/hammer.min.js','/static/scripts/lib/graph/chartjs-plugin-zoom.min.js','/static/scripts/lib/graph/moment.min.js','/static/scripts/lib/graph/chartjs-plugin-annotation.min.js','/static/scripts/lib/jsbox/jBox.all.min.js','/static/scripts/main/main.js','/local/templates/acra/js/backend_scripts.js']); 
+ BX.setCSSList(['/local/components/acra/element.list/templates/main_page_slider/style.css','/local/components/acra/element.list/templates/main_page_rating_news/style.css','/local/components/acra/element.list/templates/main_page_news_actual_comments/style.css','/static/css/lib/ion-slider/ion.rangeSlider.min.css','/static/css/lib/slick/slick.css','/static/css/lib/slick/slick-theme.css','/static/css/lib/date-picker/datepicker.min.css','/static/css/lib/daterangepicker/daterangepicker.css','/local/templates/acra/components/bitrix/menu/up/style.css','/static/css/main.css']); 
+ var _ba = _ba || []; _ba.push(["aid", "72788d6a50eb69829e2acfaa44fc9633"]); _ba.push(["host", "www.acra-ratings.ru"]); (function() {var ba = document.createElement("script"); ba.type = "text/javascript"; ba.async = true;ba.src = (document.location.protocol == "https:" ? "https://" : "http://") + "bitrix.info/ba.js";var s = document.getElementsByTagName("script")[0];s.parentNode.insertBefore(ba, s);})(); 
+	 
+	 
+	 
+grep: write error: Broken pipe
+tr: write error: Broken pipe
+sed: couldn't write 172 items to stdout: Broken pipe
+
+--- https://www.acra-ratings.ru/ratings/
+HTTP 200 | 302817 байт
+title: Рейтингуемые лица
+обозначений рейтинга AAA/AA/A/BBB(RU): 0
+строк таблиц <tr>: 0
+--- фрагмент ---
+ Рейтингуемые лица 
+	 
+	 
+		(function(m,e,t,r,i,k,a){
+			m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+			m[i].l=1*new Date();
+			for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+			k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+		})(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=112112819', 'ym');
+	
+		ym(112112819, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+	 
+	 
+ if(!window.BX)window.BX={};if(!window.BX.message)window.BX.message=function(mess){if(typeof mess==='object'){for(let i in mess) {BX.message[i]=mess[i];} return true;}}; 
+ (window.BX||top.BX).message({'JS_CORE_LOADING':'Загрузка...','JS_CORE_NO_DATA':'- Нет данных -','JS_CORE_WINDOW_CLOSE':'Закрыть','JS_CORE_WINDOW_EXPAND':'Развернуть','JS_CORE_WINDOW_NARROW':'Свернуть в окно','JS_CORE_WINDOW_SAVE':'Сохранить','JS_CORE_WINDOW_CANCEL':'Отменить','JS_CORE_WINDOW_CONTINUE':'Продолжить','JS_CORE_H':'ч','JS_CORE_M':'м','JS_CORE_S':'с','JSADM_AI_HIDE_EXTRA':'Скрыть лишние','JSADM_AI_ALL_NOTIF':'Показать все','JSADM_AUTH_REQ':'Требуется авторизация!','JS_CORE_WINDOW_AUTH':'Войти','JS_CORE_IMAGE_FULL':'Полный размер'}); 
+ 
+ BX.setJSList(['/bitrix/js/main/core/core_ajax.js','/bitrix/js/main/core/core_promise.js','/bitrix/js/main/polyfill/promise/js/promise.js','/bitrix/js/main/loadext/loadext.js','/bitrix/js/main/loadext/extension.js','/bitrix/js/main/polyfill/promise/js/promise.js','/bitrix/js/main/polyfill/find/js/find.js','/bitrix/js/main/polyfill/includes/js/includes.js','/bitrix/js/main/polyfill/matches/js/matches.js','/bitrix/js/ui/polyfill/closest/js/closest.js','/bitrix/js/main/polyfill/fill/main.polyfill.fill.js','/bitrix/js/main/polyfill/find/js/find.js','/bitrix/js/main/polyfill/matches/js/matches.js','/bitrix/js/main/polyfill/core/dist/polyfill.bundle.js','/bitrix/js/main/core/core.js','/bitrix/js/main/polyfill/intersectionobserver/js/intersectionobserver.js','/bitrix/js/main/lazyload/dist/lazyload.bundle.js','/bitrix/js/main/polyfill/core/dist/polyfill.bundle.js','/bitrix/js/main/parambag/dist/parambag.bundle.js']);
+BX.setCSSList(['/bitrix/js/main/lazyload/dist/lazyload.bundle.css','/bitrix/js/main/parambag/dist/parambag.bundle.css']); 
+ (window.BX||top.BX).message({'LANGUAGE_ID':'ru','FORMAT_DATE':'DD.MM.YYYY','FORMAT_DATETIME':'DD.MM.YYYY HH:MI:SS','COOKIE_PREFIX':'ACRA_T','SERVER_TZ_OFFSET':'10800','UTF_MODE':'Y','SITE_ID':'s1','SITE_DIR':'/','USER_ID':'','SERVER_TIME':'1790758716','USER_TZ_OFFSET':'0','USER_TZ_AUTO':'Y','bitrix_sessid':'5ca757fc0fa4ab9157a115e71bf456ef'}); 
+ BX.setJSList(['/local/templates/acra/components/bitrix/system.auth.form/desktop/script.js','/static/scripts/lib/jquery/jquery-3.5.1.min.js','/static/scripts/lib/moment/moment.min.js','/static/scripts/lib/slick-1.8.1/slick.min.js','/static/scripts/lib/sticky-js/sticky.min.js','/static/scripts/lib/ion-slider/ion.rangeSlider.min.js','/static/scripts/lib/date-picker/datepicker.min.js','/static/scripts/lib/daterangepicker/daterangepicker.js','/static/scripts/lib/graph/Chart.min.js','/static/scripts/lib/graph/hammer.min.js','/static/scripts/lib/graph/chartjs-plugin-zoom.min.js','/static/scripts/lib/graph/moment.min.js','/static/scripts/lib/graph/chartjs-plugin-annotation.min.js','/static/scripts/lib/jsbox/jBox.all.min.js','/static/scripts/main/main.js','/local/templates/acra/js/backend_scripts.js']); 
+ BX.setCSSList(['/local/templates/acra/components/bitrix/news.list/sidebar_elements/style.css','/local/templates/acra/components/bitrix/news.list/contacts_list/style.css','/static/css/lib/ion-slider/ion.rangeSlider.min.css','/static/css/lib/slick/slick.css','/static/css/lib/slick/slick-theme.css','/static/css/lib/date-picker/datepicker.min.css','/static/css/lib/daterangepicker/daterangepicker.css','/local/templates/acra/components/bitrix/menu/up/style.css','/static/css/main.css']); 
+ var _ba = _ba || []; _ba.push(["aid", "72788d6a50eb69829e2acfaa44fc9633"]); _ba.push(["host", "www.acra-ratings.ru"]); (function() {var ba = document.createElement("script"); ba.type = "text/javascript"; ba.async = true;ba.src = (document.location.protocol == "https:" ? "https://" : "http://") + "bitrix.info/ba.js";var s = document.getElementsByTagName("script")[0];s.parentNode.insertBefore(ba, s);})(); 
+	 
+	 
+	 
+grep: write error: Broken pipe
+tr: write error: Broken pipe
+sed: couldn't write 172 items to stdout: Broken pipe
+
+--- https://www.acra-ratings.ru/ratings/companies/
+HTTP 404 | 191149 байт
+title: Страница не найдена
+обозначений рейтинга AAA/AA/A/BBB(RU): 0
+строк таблиц <tr>: 0
+--- фрагмент ---
+ Страница не найдена 
+	 
+	 
+		(function(m,e,t,r,i,k,a){
+			m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+			m[i].l=1*new Date();
+			for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+			k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+		})(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=112112819', 'ym');
+	
+		ym(112112819, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+	 
+	 
+ if(!window.BX)window.BX={};if(!window.BX.message)window.BX.message=function(mess){if(typeof mess==='object'){for(let i in mess) {BX.message[i]=mess[i];} return true;}}; 
+ (window.BX||top.BX).message({'JS_CORE_LOADING':'Загрузка...','JS_CORE_NO_DATA':'- Нет данных -','JS_CORE_WINDOW_CLOSE':'Закрыть','JS_CORE_WINDOW_EXPAND':'Развернуть','JS_CORE_WINDOW_NARROW':'Свернуть в окно','JS_CORE_WINDOW_SAVE':'Сохранить','JS_CORE_WINDOW_CANCEL':'Отменить','JS_CORE_WINDOW_CONTINUE':'Продолжить','JS_CORE_H':'ч','JS_CORE_M':'м','JS_CORE_S':'с','JSADM_AI_HIDE_EXTRA':'Скрыть лишние','JSADM_AI_ALL_NOTIF':'Показать все','JSADM_AUTH_REQ':'Требуется авторизация!','JS_CORE_WINDOW_AUTH':'Войти','JS_CORE_IMAGE_FULL':'Полный размер'}); 
+ 
+ BX.setJSList(['/bitrix/js/main/core/core_ajax.js','/bitrix/js/main/core/core_promise.js','/bitrix/js/main/polyfill/promise/js/promise.js','/bitrix/js/main/loadext/loadext.js','/bitrix/js/main/loadext/extension.js','/bitrix/js/main/polyfill/promise/js/promise.js','/bitrix/js/main/polyfill/find/js/find.js','/bitrix/js/main/polyfill/includes/js/includes.js','/bitrix/js/main/polyfill/matches/js/matches.js','/bitrix/js/ui/polyfill/closest/js/closest.js','/bitrix/js/main/polyfill/fill/main.polyfill.fill.js','/bitrix/js/main/polyfill/find/js/find.js','/bitrix/js/main/polyfill/matches/js/matches.js','/bitrix/js/main/polyfill/core/dist/polyfill.bundle.js','/bitrix/js/main/core/core.js','/bitrix/js/main/polyfill/intersectionobserver/js/intersectionobserver.js','/bitrix/js/main/lazyload/dist/lazyload.bundle.js','/bitrix/js/main/polyfill/core/dist/polyfill.bundle.js','/bitrix/js/main/parambag/dist/parambag.bundle.js']);
+BX.setCSSList(['/bitrix/js/main/lazyload/dist/lazyload.bundle.css','/bitrix/js/main/parambag/dist/parambag.bundle.css']); 
+ (window.BX||top.BX).message({'LANGUAGE_ID':'ru','FORMAT_DATE':'DD.MM.YYYY','FORMAT_DATETIME':'DD.MM.YYYY HH:MI:SS','COOKIE_PREFIX':'ACRA_T','SERVER_TZ_OFFSET':'10800','UTF_MODE':'Y','SITE_ID':'s1','SITE_DIR':'/','USER_ID':'','SERVER_TIME':'1790758718','USER_TZ_OFFSET':'0','USER_TZ_AUTO':'Y','bitrix_sessid':'254b07c4624f67504e7353b5ccd4a099'}); 
+ BX.setJSList(['/local/templates/acra/components/bitrix/system.auth.form/desktop/script.js','/static/scripts/lib/jquery/jquery-3.5.1.min.js','/static/scripts/lib/moment/moment.min.js','/static/scripts/lib/slick-1.8.1/slick.min.js','/static/scripts/lib/sticky-js/sticky.min.js','/static/scripts/lib/ion-slider/ion.rangeSlider.min.js','/static/scripts/lib/date-picker/datepicker.min.js','/static/scripts/lib/daterangepicker/daterangepicker.js','/static/scripts/lib/graph/Chart.min.js','/static/scripts/lib/graph/hammer.min.js','/static/scripts/lib/graph/chartjs-plugin-zoom.min.js','/static/scripts/lib/graph/moment.min.js','/static/scripts/lib/graph/chartjs-plugin-annotation.min.js','/static/scripts/lib/jsbox/jBox.all.min.js','/static/scripts/main/main.js','/local/templates/acra/js/backend_scripts.js']); 
+ BX.setCSSList(['/static/css/lib/ion-slider/ion.rangeSlider.min.css','/static/css/lib/slick/slick.css','/static/css/lib/slick/slick-theme.css','/static/css/lib/date-picker/datepicker.min.css','/static/css/lib/daterangepicker/daterangepicker.css','/local/templates/acra/components/bitrix/menu/up/style.css','/static/css/main.css']); 
+ var _ba = _ba || []; _ba.push(["aid", "72788d6a50eb69829e2acfaa44fc9633"]); _ba.push(["host", "www.acra-ratings.ru"]); (function() {var ba = document.createElement("script"); ba.type = "text/javascript"; ba.async = true;ba.src = (document.location.protocol == "https:" ? "https://" : "http://") + "bitrix.info/ba.js";var s = document.getElementsByTagName("script")[0];s.parentNode.insertBefore(ba, s);})(); 
+	 
+	 
+	 
+grep: write error: Broken pipe
+tr: write error: Broken pipe
+sed: couldn't write 117 items to stdout: Broken pipe
+
+--- https://www.acra-ratings.ru/ratings/banks/
+HTTP 404 | 191117 байт
+title: Страница не найдена
+обозначений рейтинга AAA/AA/A/BBB(RU): 0
+строк таблиц <tr>: 0
+--- фрагмент ---
+ Страница не найдена 
+	 
+	 
+		(function(m,e,t,r,i,k,a){
+			m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+			m[i].l=1*new Date();
+			for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+			k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+		})(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=112112819', 'ym');
+	
+		ym(112112819, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+	 
+	 
+ if(!window.BX)window.BX={};if(!window.BX.message)window.BX.message=function(mess){if(typeof mess==='object'){for(let i in mess) {BX.message[i]=mess[i];} return true;}}; 
+ (window.BX||top.BX).message({'JS_CORE_LOADING':'Загрузка...','JS_CORE_NO_DATA':'- Нет данных -','JS_CORE_WINDOW_CLOSE':'Закрыть','JS_CORE_WINDOW_EXPAND':'Развернуть','JS_CORE_WINDOW_NARROW':'Свернуть в окно','JS_CORE_WINDOW_SAVE':'Сохранить','JS_CORE_WINDOW_CANCEL':'Отменить','JS_CORE_WINDOW_CONTINUE':'Продолжить','JS_CORE_H':'ч','JS_CORE_M':'м','JS_CORE_S':'с','JSADM_AI_HIDE_EXTRA':'Скрыть лишние','JSADM_AI_ALL_NOTIF':'Показать все','JSADM_AUTH_REQ':'Требуется авторизация!','JS_CORE_WINDOW_AUTH':'Войти','JS_CORE_IMAGE_FULL':'Полный размер'}); 
+ 
+ BX.setJSList(['/bitrix/js/main/core/core_ajax.js','/bitrix/js/main/core/core_promise.js','/bitrix/js/main/polyfill/promise/js/promise.js','/bitrix/js/main/loadext/loadext.js','/bitrix/js/main/loadext/extension.js','/bitrix/js/main/polyfill/promise/js/promise.js','/bitrix/js/main/polyfill/find/js/find.js','/bitrix/js/main/polyfill/includes/js/includes.js','/bitrix/js/main/polyfill/matches/js/matches.js','/bitrix/js/ui/polyfill/closest/js/closest.js','/bitrix/js/main/polyfill/fill/main.polyfill.fill.js','/bitrix/js/main/polyfill/find/js/find.js','/bitrix/js/main/polyfill/matches/js/matches.js','/bitrix/js/main/polyfill/core/dist/polyfill.bundle.js','/bitrix/js/main/core/core.js','/bitrix/js/main/polyfill/intersectionobserver/js/intersectionobserver.js','/bitrix/js/main/lazyload/dist/lazyload.bundle.js','/bitrix/js/main/polyfill/core/dist/polyfill.bundle.js','/bitrix/js/main/parambag/dist/parambag.bundle.js']);
+BX.setCSSList(['/bitrix/js/main/lazyload/dist/lazyload.bundle.css','/bitrix/js/main/parambag/dist/parambag.bundle.css']); 
+ (window.BX||top.BX).message({'LANGUAGE_ID':'ru','FORMAT_DATE':'DD.MM.YYYY','FORMAT_DATETIME':'DD.MM.YYYY HH:MI:SS','COOKIE_PREFIX':'ACRA_T','SERVER_TZ_OFFSET':'10800','UTF_MODE':'Y','SITE_ID':'s1','SITE_DIR':'/','USER_ID':'','SERVER_TIME':'1790758719','USER_TZ_OFFSET':'0','USER_TZ_AUTO':'Y','bitrix_sessid':'4595817f92f43058d52d7d8e4f1d188f'}); 
+ BX.setJSList(['/local/templates/acra/components/bitrix/system.auth.form/desktop/script.js','/static/scripts/lib/jquery/jquery-3.5.1.min.js','/static/scripts/lib/moment/moment.min.js','/static/scripts/lib/slick-1.8.1/slick.min.js','/static/scripts/lib/sticky-js/sticky.min.js','/static/scripts/lib/ion-slider/ion.rangeSlider.min.js','/static/scripts/lib/date-picker/datepicker.min.js','/static/scripts/lib/daterangepicker/daterangepicker.js','/static/scripts/lib/graph/Chart.min.js','/static/scripts/lib/graph/hammer.min.js','/static/scripts/lib/graph/chartjs-plugin-zoom.min.js','/static/scripts/lib/graph/moment.min.js','/static/scripts/lib/graph/chartjs-plugin-annotation.min.js','/static/scripts/lib/jsbox/jBox.all.min.js','/static/scripts/main/main.js','/local/templates/acra/js/backend_scripts.js']); 
+ BX.setCSSList(['/static/css/lib/ion-slider/ion.rangeSlider.min.css','/static/css/lib/slick/slick.css','/static/css/lib/slick/slick-theme.css','/static/css/lib/date-picker/datepicker.min.css','/static/css/lib/daterangepicker/daterangepicker.css','/local/templates/acra/components/bitrix/menu/up/style.css','/static/css/main.css']); 
+ var _ba = _ba || []; _ba.push(["aid", "72788d6a50eb69829e2acfaa44fc9633"]); _ba.push(["host", "www.acra-ratings.ru"]); (function() {var ba = document.createElement("script"); ba.type = "text/javascript"; ba.async = true;ba.src = (document.location.protocol == "https:" ? "https://" : "http://") + "bitrix.info/ba.js";var s = document.getElementsByTagName("script")[0];s.parentNode.insertBefore(ba, s);})(); 
+	 
+	 
+	 
+grep: write error: Broken pipe
+tr: write error: Broken pipe
+sed: couldn't write 117 items to stdout: Broken pipe
