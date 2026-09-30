@@ -87,7 +87,11 @@ const COLS = {
     cell: b => {
       const n = b.couponPeriod ? Math.round(365 / b.couponPeriod) : null;
       if (!n) return <span className="c-3">—</span>;
-      return <span className="c-2">{n} раз</span>;
+      /* 1 раз, 2–4 раза, 5+ раз; 11–14 — всегда «раз». */
+      const tail = n % 100;
+      const last = n % 10;
+      const word = (tail >= 11 && tail <= 14) ? 'раз' : last === 1 ? 'раз' : last >= 2 && last <= 4 ? 'раза' : 'раз';
+      return <span className="c-2">{n} {word}</span>;
     },
   },
   ytm: { label: 'YTM', sort: b => b.ytm ?? -999, cell: b => <YtmCell b={b} /> },
