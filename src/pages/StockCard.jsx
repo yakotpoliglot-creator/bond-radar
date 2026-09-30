@@ -177,6 +177,15 @@ export default function StockCard() {
   const name = stock?.name || stock?.shortname || secid;
   const price = stock?.price ?? (history?.length ? history[history.length - 1].close : null);
 
+  /* Название эмитента для поиска в скринере. Биржа даёт «ВТБ ао»,
+     «Сбер ао», «ГАЗПРОМ ао» — отбрасываем пометку типа акции, остаётся
+     тот же корень, по которому называются и облигации эмитента
+     («ВТБ С1-733», «Сбер Sb51R»). Это поиск по подстроке, поэтому
+     точное юридическое имя здесь только навредило бы. */
+  const issuerToken = String(stock?.shortname || stock?.name || '')
+    .replace(/\s+(ао|ап|ao|ap)\.?$/i, '')
+    .trim();
+
   return (
     <div>
       {/* ── Шапка ─────────────────────────────────────────────────── */}
@@ -258,12 +267,18 @@ export default function StockCard() {
       {/* ── Подсказка по соседним разделам ────────────────────────── */}
       <Panel title="Дальше" style={{ marginTop: 14 }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Link className="btn btn-sm" to="/screener">Найти облигации этого эмитента в скринере</Link>
+          {issuerToken && (
+            <Link className="btn btn-sm" to={'/screener?q=' + encodeURIComponent(issuerToken)}>
+              Облигации «{issuerToken}» в скринере
+            </Link>
+          )}
           <Link className="btn btn-sm" to="/issuers">Все эмитенты облигаций</Link>
         </div>
         <div className="c-3" style={{ fontSize: 11, marginTop: 10, lineHeight: 1.6 }}>
-          Облигации конкретного эмитента удобнее смотреть через скринер: там есть фильтр
-          по эмитенту и полный набор выпусков с доходностью и дюрацией.
+          Кнопка открывает скринер с уже подставленным названием эмитента в поле поиска —
+          сравнивать выпуски по доходности, дюрации и цене удобнее там. Если в выдаче пусто,
+          значит облигаций этого эмитента на Московской бирже сейчас нет: биржа называет
+          выпуски иначе, чем акции, и поиск идёт по подстроке.
         </div>
       </Panel>
     </div>

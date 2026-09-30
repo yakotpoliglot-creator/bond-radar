@@ -266,6 +266,14 @@ export default function Screener() {
     [catSlug],
   );
 
+  /* ── поиск из ссылки: #/screener?q=ВТБ ────────────────────────────
+     Приходит с карточки акции («Найти облигации этого эмитента»).
+     Раньше эта кнопка вела просто на /screener, и обещание не
+     выполнялось: человек видел все 3000 выпусков и пустое поле поиска.
+     Заполняем поле один раз на каждый новый q — дальше пользователь
+     правит его сам, и перебивать его ввод нельзя. */
+  const qParam = new URLSearchParams(loc.search).get('q');
+
   /* ── фильтрация ── */
   const { rows, hiddenAnomaly } = useMemo(() => {
     const out = [];
@@ -307,6 +315,13 @@ export default function Screener() {
 
   const set = patch => setFilters(f => ({ ...f, ...patch }));
   const reset = () => { setFilters(EMPTY_FILTERS); setOnlyFav(false); setPage(1); };
+
+  /* Подставляем поиск из адреса (пришёл с карточки акции). Эффект стоит
+     здесь, а не рядом с чтением qParam: set объявлен выше только тут. */
+  useEffect(() => {
+    if (qParam) { set({ search: qParam }); setPage(1); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qParam]);
 
   /* ── Выгрузка отфильтрованного списка в CSV ──
      Разделитель «;» и BOM — чтобы Excel в русской локали открыл файл
@@ -404,6 +419,13 @@ export default function Screener() {
               value={filters.search}
               onChange={e => set({ search: e.target.value })}
             />
+            {qParam && filters.search === qParam && (
+              <div className="c-3" style={{ fontSize: 10.5, marginTop: 3 }}>
+                подставлено из карточки акции ·{' '}
+                <span style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={() => set({ search: '' })}>очистить</span>
+              </div>
+            )}
           </div>
 
           <div className="fg">
