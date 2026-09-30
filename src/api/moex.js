@@ -631,6 +631,29 @@ export async function fetchStocks({ includeFunds = false } = {}) {
     .filter(s => s.price != null);
 }
 
+/* ── история цен по акции ────────────────────────────────────────── *
+ * Нужна для графика в карточке акции. Отдельный запрос на бумагу —
+ * поэтому вызывается только со страницы конкретной акции, а не в
+ * списке: 262 запроса ради списка были бы издевательством над биржей.
+ */
+export async function fetchStockHistory(secid, { from, till } = {}) {
+  if (!secid) return [];
+  const d = await iss(`/history/engines/stock/markets/shares/boards/TQBR/securities/${secid}.json`, {
+    from: from || defaultFrom(180),
+    till,
+  });
+  return (d.history || []).map(r => ({
+    date: r.TRADEDATE,
+    close: r.CLOSE != null ? +r.CLOSE : null,
+    open: r.OPEN != null ? +r.OPEN : null,
+    high: r.HIGH != null ? +r.HIGH : null,
+    low: r.LOW != null ? +r.LOW : null,
+    value: r.VALUE != null ? +r.VALUE : null,
+    volume: r.VOLUME != null ? +r.VOLUME : null,
+    numTrades: r.NUMTRADES != null ? +r.NUMTRADES : null,
+  })).filter(r => r.close != null);
+}
+
 /* ── ставка ЦБ (история известных решений) ───────────────────────── */
 export const KEY_RATE_HISTORY = [
   ['2024-10-28', 21.0], ['2025-06-09', 20.0], ['2025-07-28', 18.0],

@@ -11,7 +11,7 @@ import {
 } from '../api/moex';
 import { Kpi, Panel, Loading, ErrorBox, BondTable } from '../components/ui';
 import { IndexCard, RatesNow, TopByYtm } from '../components/market';
-import { nf, dateShort, chgStr, chgStrA, chgClass, chgPill } from '../lib/format';
+import { nf, dateShort, chgStrA, chgClass, chgPill } from '../lib/format';
 
 /* ── Бегущая строка рынка ──────────────────────────────────────────
    Приём с bondradar.pro: индексы и самые торгуемые акции идут одной
@@ -656,6 +656,19 @@ export default function Home() {
           note="топ по доходности"
           empty="Нет выпусков с плавающим купоном"
         />
+      </div>
+
+      {/* ── Легенда к цвету доходности ────────────────────────────────
+          Без неё цвет читается как оценка «хорошо/плохо», а это не так:
+          это шкала доходности. Поясняем прямо под таблицами. */}
+      <div className="legend">
+        <span className="legend-t">Цвет доходности</span>
+        <span className="legend-i"><i className="c-g" />до 18%</span>
+        <span className="legend-i"><i className="c-a" />18–24%</span>
+        <span className="legend-i"><i className="c-r" />от 24%</span>
+        <span className="legend-n">
+          шкала доходности, а не оценка надёжности: выше доходность — выше и риск, который за неё платят
+        </span>
       </div>
 
       {/* ── 6. Карта рынка ────────────────────────────────────────── */}

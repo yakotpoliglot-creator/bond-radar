@@ -10,6 +10,7 @@ import Issuer from './pages/Issuer';
 import Issuers from './pages/Issuers';
 import Collections from './pages/Collections';
 import Stocks from './pages/Stocks';
+import StockCard from './pages/StockCard';
 import Portfolio from './pages/Portfolio';
 import Favorites from './pages/Favorites';
 import CalendarPage from './pages/Calendar';
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/collections" element={<Collections />} />
           <Route path="/collections/:slug" element={<Collections />} />
           <Route path="/stocks" element={<Stocks />} />
+          <Route path="/stock/:secid" element={<StockCard />} />
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/calendar" element={<CalendarPage />} />

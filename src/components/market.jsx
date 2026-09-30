@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchIndexHistory, curveAt, median, daysUntil } from '../api/moex';
-import { nf, chgStrA, chgPill } from '../lib/format';
+import { nf, chgStrA, chgPill, ytmTone } from '../lib/format';
 import { Panel } from './ui';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -269,7 +269,15 @@ function TopByYtm({ title, bonds, empty, note, limit = 5 }) {
                     </td>
                     <td className="mono">{b.couponPercent == null ? '—' : nf(b.couponPercent, 2) + '%'}</td>
                     <td className="mono">{cur == null ? '—' : nf(cur, 2) + '%'}</td>
-                    <td className="mono" style={{ fontWeight: 700 }}>{nf(b.ytm, 2)}%</td>
+                    <td className="mono" style={{ fontWeight: 700 }}>
+                      <span className={ytmTone(b.ytm)}>{nf(b.ytm, 2)}%</span>
+                      {/* 3-й уровень листинга — повышенный риск: биржа допускает
+                          такие бумаги к торгам с меньшими требованиями. */}
+                      {b.listLevel === 3 && (
+                        <span className="c-r" style={{ fontSize: 9, fontWeight: 700, marginLeft: 4 }}
+                          title="3 уровень листинга — повышенный риск">▲</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}

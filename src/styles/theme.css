@@ -401,6 +401,34 @@ table.tbl tbody tr { cursor: pointer; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ═══════════════════ Легенда ═══════════════════
+   Объясняет цвет, который иначе читается как оценка. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: -2px 0 14px;
+  font-size: 11px;
+  color: var(--text3);
+}
+.legend-t {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 10px;
+  color: var(--text3);
+}
+.legend-i { display: inline-flex; align-items: center; gap: 5px; }
+.legend-i i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+  background: currentColor;
+}
+.legend-n { flex: 1 1 240px; min-width: 200px; }
+
 /* ═══════════════════════ Прочее ═══════════════════════ */
 .page-h { margin-bottom: 16px; }
 .page-t { font-size: 21px; font-weight: 700; }

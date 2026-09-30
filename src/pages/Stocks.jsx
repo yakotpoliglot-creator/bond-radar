@@ -4,6 +4,7 @@
    поэтому список грузим один раз при монтировании.
    ═══════════════════════════════════════════════════════════════════ */
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchStocks } from '../api/moex';
 import { Panel, Kpi, Loading, ErrorBox, Pager } from '../components/ui';
 import { nf, money, chgPill, chgStrA } from '../lib/format';
@@ -61,6 +62,7 @@ const COLS = {
 const ORDER = ['secid', 'name', 'price', 'change', 'open', 'low', 'high', 'turnover', 'numTrades', 'capitalization'];
 
 export default function StocksPage() {
+  const nav = useNavigate();
   const [stocks, setStocks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -133,6 +135,10 @@ export default function StocksPage() {
         <div className="page-s">
           Основной режим TQBR · {nf(stocks.length, 0)} акций с ценой (обыкновенные и привилегированные) · источник — ISS MOEX
         </div>
+        <div className="c-3" style={{ fontSize: 11, marginTop: 4 }}>
+          Нажмите на бумагу — откроется карточка с графиком цены и торговыми данными.
+          Заголовки колонок сортируют таблицу.
+        </div>
       </div>
 
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', marginBottom: 14 }}>
@@ -178,7 +184,8 @@ export default function StocksPage() {
             </thead>
             <tbody>
               {rows.map(s => (
-                <tr key={s.secid}>
+                <tr key={s.secid} onClick={() => nav('/stock/' + s.secid)}
+                  title={'Открыть карточку ' + s.shortname}>
                   {ORDER.map(k => <td key={k}>{COLS[k].cell(s)}</td>)}
                 </tr>
               ))}
@@ -207,7 +214,7 @@ export default function StocksPage() {
             </thead>
             <tbody>
               {top10.map((s, i) => (
-                <tr key={s.secid}>
+                <tr key={s.secid} onClick={() => nav('/stock/' + s.secid)}>
                   <td className="mono c-3">{i + 1}</td>
                   <td><span className="mono" style={{ fontWeight: 600 }}>{s.secid}</span></td>
                   <td style={{ textAlign: 'left', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>

@@ -90,7 +90,7 @@ export default function Layout({ children, theme, setTheme }) {
         >
           {open ? '✕' : '☰'}
         </button>
-        <span className="topbar-t">БондРадар</span>
+        <span className="topbar-t">ПапаБонд</span>
         {label ? <span className="topbar-cur">{label}</span> : null}
       </header>
 
@@ -104,7 +104,7 @@ export default function Layout({ children, theme, setTheme }) {
       <nav className={'side' + (open ? ' open' : '')}>
         <NavLink to="/" className="logo">
           <span className="dot" />
-          БондРадар
+          ПапаБонд
         </NavLink>
 
         {SECTIONS.map(sec => (
