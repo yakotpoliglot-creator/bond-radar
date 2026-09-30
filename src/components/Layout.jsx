@@ -20,6 +20,7 @@ const SECTIONS = [
       { to: '/stocks', icon: '◈', label: 'Акции Мосбиржи' },
       { to: '/calendar', icon: '▤', label: 'Календарь событий' },
       { to: '/placements', icon: '◈', label: 'Размещения' },
+      { to: '/risk', icon: '◇', label: 'Радар риска' },
     ],
   },
   {
