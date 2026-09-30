@@ -169,7 +169,12 @@ function normalize(s, m, y, board = 'TQCB') {
     const bound = (Math.pow(back / price, 1 / years) - 1) * 100;
     return bound * 1.35 + 20;
   })();
-  if (rawYtm != null && ytmCeiling != null && rawYtm > ytmCeiling) rawYtm = null;
+  /* Значение, срезанное потолком, сохраняем отдельным полем. На главной
+     такие числа показывать нельзя, а «Радару риска» они и нужны: там
+     собрано самое плохое, и вырезать из него худшее — значит сломать
+     саму страницу. У оригинала на радаре так и стоит «>200%». */
+  const ytmAboveCeiling = (rawYtm != null && ytmCeiling != null && rawYtm > ytmCeiling) ? rawYtm : null;
+  if (ytmAboveCeiling != null) rawYtm = null;
   const ytmOk = rawYtm != null && rawYtm >= YTM_MIN && rawYtm <= YTM_MAX;
   /* Два поля доходности у биржи могут противоречить друг другу в разы:
      ВЭБ.РФ 19 — 0,50% против 170,43%, СистемБ1P4 — −7,23% против 6,70%.
@@ -236,6 +241,7 @@ function normalize(s, m, y, board = 'TQCB') {
 
     ytm,
     ytmRaw: rawYtm,
+    ytmAboveCeiling,
     ytmOk,
     ytmSuspect,
     ytmAlt,

@@ -41,20 +41,29 @@ export default function Risk() {
     if (!bonds) return null;
     const corp = bonds.filter(b => !b.isOfz && !b.isSubfederal);
 
+    /* Доходность берём и ту, что срезана потолком (ytmAboveCeiling):
+       на этой странице нужны как раз худшие бумаги, и вырезать из неё
+       худшее — значит сломать саму страницу. У оригинала сверху так и
+       стоит «>200%». Показываем их как «>200%», а не числом: величину
+       в 17 626% всерьёз воспринимать нельзя, а факт «рынок закладывает
+       дефолт» — можно. */
+    const yOf = b => (b.ytm != null ? b.ytm : (b.ytmAboveCeiling != null ? b.ytmAboveCeiling : null));
+
     /* «Под давлением» — доходность выше порога И цена ниже номинала.
        Одной доходности мало: у бумаги с офертой через две недели она
        взлетает сама по себе, без всякого риска. Поэтому второе условие
        обязательно — рынок платит за риск только тогда, когда продаёт
        бумагу дешевле того, что эмитент обещает вернуть. */
     const pressure = bonds
-      .filter(b => b.ytm != null && b.ytm > RISK_YTM && b.price != null && b.price < 95)
-      .sort((a, b) => b.ytm - a.ytm);
+      .filter(b => { const y = yOf(b); return y != null && y > RISK_YTM && b.price != null && b.price < 95; })
+      .sort((a, b) => yOf(b) - yOf(a));
 
     return {
       pressure,
+      yOf,
       inZone: pressure.length,
-      over30: bonds.filter(b => b.ytm != null && b.ytm > 30).length,
-      over100: bonds.filter(b => b.ytm != null && b.ytm > 100).length,
+      over30: bonds.filter(b => { const y = yOf(b); return y != null && y > 30; }).length,
+      over100: bonds.filter(b => { const y = yOf(b); return y != null && y > 100; }).length,
       corpTraded: corp.filter(b => b.turnover != null && b.turnover > 0).length,
       corpAll: corp.length,
     };
@@ -169,7 +178,9 @@ export default function Risk() {
                         {b.listLevel != null ? ` · ${b.listLevel} ур.` : ''}
                       </div>
                     </td>
-                    <td className={'num ' + ytmTone(b.ytm)}>{nf(b.ytm, 2)}%</td>
+                    <td className={'num ' + ytmTone(b.ytm != null ? b.ytm : 100)}>
+                      {b.ytm != null ? nf(b.ytm, 2) + '%' : '>200%'}
+                    </td>
                     <td className="num">{nf(b.price, 2)}</td>
                     <td className="num">{b.couponPercent == null ? '—' : nf(b.couponPercent, 2) + '%'}</td>
                     <td className="num">{duration(b.durationDays)}</td>
