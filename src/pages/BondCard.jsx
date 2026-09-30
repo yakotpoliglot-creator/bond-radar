@@ -373,7 +373,7 @@ export default function BondCard() {
                 );
               })}
               {!(card?.coupons || []).length && (
-                <tr><td colSpan={5} className="empty">Купонный график MOEX не отдал (возможно, дисконтная бумага)</td></tr>
+                <tr><td colSpan={5} className="empty">Купонный график по этой бумаге биржа не публикует — у неё либо один купон в конце срока, либо выплаты не расписаны</td></tr>
               )}
             </tbody>
           </table>

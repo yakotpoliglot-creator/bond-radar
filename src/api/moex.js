@@ -256,20 +256,45 @@ export function fetchBonds({ force = false } = {}) {
   return bondsPromise;
 }
 
-/* ── карточка облигации ──────────────────────────────────────────── */
+/* ── карточка облигации ──────────────────────────────────────────── *
+ *
+ * Тонкость, на которой мы уже попадались: график купонов и площадки
+ * биржа отдаёт только по коду ПЛОЩАДКИ. У корпоратов он совпадает
+ * с ISIN, а у ОФЗ — нет: ISIN RU000A10D533, а код на TQOB —
+ * SU26254RMFS1. Запрос по ISIN возвращает НОЛЬ площадок и НОЛЬ
+ * купонов, и карточка писала «MOEX не отдал график, возможно
+ * дисконтная бумага» про ОФЗ с купоном 13% и 20 выплатами.
+ * Проверено на живом ISS: по SU26254RMFS1 приходит 48 площадок
+ * и 20 купонов, по RU000A10D533 — пусто.
+ *
+ * Поэтому сначала спрашиваем по тому, что пришло в адресе, и только
+ * если площадок нет — ищем код площадки в уже загруженном списке
+ * бумаг (он кэширован общим промисом, лишнего запроса не будет).
+ */
+async function boardSecidFor(isin) {
+  const all = await fetchBonds().catch(() => []);
+  const hit = all.find(b => b.isin === isin || b.secid === isin);
+  return hit && hit.secid && hit.secid !== isin ? hit.secid : null;
+}
+
 export async function fetchBondCard(secidOrIsin) {
   const id = (secidOrIsin || '').trim().toUpperCase();
-  const [desc, bondization, boardData] = await Promise.all([
+  const [desc, boardData] = await Promise.all([
     iss(`/securities/${id}.json`),
-    iss(`/securities/${id}/bondization.json`).catch(() => ({})),
     iss(`/securities/${id}.json`, { 'iss.only': 'boards' }).catch(() => ({})),
   ]);
+
+  const boards = boardData.boards || [];
+  const couponId = boards.length ? id : (await boardSecidFor(id)) || id;
+  const bondization = couponId === id
+    ? await iss(`/securities/${id}/bondization.json`).catch(() => ({}))
+    : await iss(`/securities/${couponId}/bondization.json`).catch(() => ({}));
 
   const description = {};
   (desc.description || []).forEach(x => { description[x.name] = x.value; });
 
-  const bonds = boardData.boards || [];
-  const mainBoard = bonds.find(b => b.is_primary === 1) || bonds[0];
+  const mainBoard = boards.find(b => b.is_primary === 1) || boards[0];
+  const bonds = boards;
 
   const coupons = (bondization.coupons || []).map(c => ({
     date: c.coupondate,
