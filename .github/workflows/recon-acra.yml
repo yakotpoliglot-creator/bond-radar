@@ -1,0 +1,71 @@
+name: Разведка АКРА
+
+# Разовый воркфлоу: проверяем, доступен ли сайт АКРА из сети GitHub Actions.
+# Из локальной сети он не отвечает вообще (падает на соединении), поэтому
+# единственный способ узнать правду — постучаться с другой сети.
+#
+# Запускается сам при пуше этого файла. Отчёт кладётся в recon-acra.txt
+# в корне репозитория, чтобы его можно было прочитать без разбора логов.
+# После проверки и файл, и этот воркфлоу удаляются.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/recon-acra.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Стучимся в АКРА
+        run: |
+          {
+            echo "Разведка АКРА из сети GitHub Actions"
+            echo "Дата: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "Адрес, с которого идём: определяется ниже"
+            echo
+            echo "=== Внешний IP (для понимания, чья это сеть)"
+            curl -sS --max-time 15 https://api.ipify.org || echo "не удалось"
+            echo
+            echo
+            for url in \
+              "https://acra-ratings.ru/" \
+              "https://www.acra-ratings.ru/" \
+              "https://acra-ratings.ru/ratings/" \
+              "https://www.acra-ratings.ru/ratings/" \
+              "https://www.acra-ratings.ru/robots.txt" ; do
+              echo "=== $url"
+              code=$(curl -sS -o /tmp/body -w '%{http_code}' -L --max-time 30 \
+                -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' \
+                -H 'Accept-Language: ru-RU,ru;q=0.9' "$url" 2>/tmp/err || echo "000")
+              size=$(wc -c < /tmp/body 2>/dev/null || echo 0)
+              echo "HTTP $code | $size байт"
+              if [ -s /tmp/err ]; then echo "curl: $(head -c 300 /tmp/err)"; fi
+              if [ "$size" -gt 0 ]; then
+                echo "--- начало ответа ---"
+                head -c 400 /tmp/body
+                echo
+              fi
+              echo
+            done
+            echo "=== DNS"
+            getent hosts acra-ratings.ru || echo "acra-ratings.ru не разрешается"
+            echo
+            echo "=== Для сравнения: контрольный сайт, который заведомо открыт"
+            curl -sS -o /dev/null -w 'raexpert.ru -> HTTP %{http_code}\n' --max-time 20 https://raexpert.ru/ || echo "raexpert недоступен"
+          } > recon-acra.txt 2>&1
+          cat recon-acra.txt
+
+      - name: Сохранить отчёт в репозиторий
+        run: |
+          git config user.name "recon"
+          git config user.email "recon@local"
+          git add recon-acra.txt
+          git commit -m "Разведка АКРА из сети Actions" || echo "нечего коммитить"
+          git push
