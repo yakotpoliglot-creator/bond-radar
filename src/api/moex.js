@@ -889,3 +889,74 @@ export function daysUntil(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   return Math.round((d - new Date()) / 86400000);
 }
+
+/* ── Отрасли акций ────────────────────────────────────────────────────
+ * Московская биржа ведёт 10 отраслевых индексов и по каждому отдаёт
+ * состав — тикеры бумаг с весами. Это единственный машинный источник
+ * отрасли: в описании бумаги поле SECTORID пустое у всех акций, а
+ * /iss/securitygroups делит бумаги не по отраслям, а по типам
+ * инструментов («акции», «депозитарные расписки» и так далее).
+ *
+ * Эндпоинт отдаёт CORS-заголовок ровно с адресом нашего сайта, поэтому
+ * браузер обращается к нему напрямую — робот не нужен.
+ *
+ * Покрытие неполное, и это не наша недоработка: биржа включает в
+ * отраслевые индексы не все бумаги. У Газпромнефти (SIBN) и ГАЗ-Тек
+ * (GAZT) отрасли нет ни у нас, ни у оригинала — там одинаковый
+ * прочерк. Честный прочерк лучше выдуманной отрасли.
+ *
+ * Десять запросов идут параллельно и кэшируются на время сессии.
+ */
+
+const SECTOR_INDICES = {
+  MOEXFN: 'Финансы',
+  MOEXOG: 'Нефть и газ',
+  MOEXMM: 'Металлы и добыча',
+  MOEXTL: 'Телекомы',
+  MOEXCH: 'Химия',
+  MOEXCN: 'Потребительский',
+  MOEXEU: 'Электроэнергетика',
+  MOEXIT: 'Технологии',
+  MOEXTN: 'Транспорт',
+  MOEXRE: 'Строительство',
+};
+
+let sectorsPromise = null;
+
+export function fetchSectors() {
+  if (sectorsPromise) return sectorsPromise;
+
+  sectorsPromise = (async () => {
+    const ids = Object.keys(SECTOR_INDICES);
+
+    /* Один упавший индекс не должен ронять всю таблицу: остальные
+       девять отраслей всё равно нужны. Поэтому ошибка глушится
+       внутри, а не снаружи. */
+    const parts = await Promise.all(ids.map(async id => {
+      try {
+        const r = await iss(`/statistics/engines/stock/markets/index/analytics/${id}.json`);
+        return { id, rows: r?.analytics || [] };
+      } catch {
+        return { id, rows: [] };
+      }
+    }));
+
+    const map = {};
+    for (const { id, rows } of parts) {
+      const label = SECTOR_INDICES[id];
+      for (const row of rows) {
+        const t = row && row.ticker;
+        /* Первый индекс выигрывает. Бумага изредка попадает сразу в
+           два отраслевых индекса, и тогда отрасль определяется
+           порядком в списке выше, а не случайностью ответа биржи. */
+        if (t && !map[t]) map[t] = label;
+      }
+    }
+    return map;
+  })();
+
+  /* Неудачу не кэшируем — иначе одна сетевая ошибка лишила бы
+     отрасли до перезагрузки страницы. */
+  sectorsPromise.catch(() => { sectorsPromise = null; });
+  return sectorsPromise;
+}

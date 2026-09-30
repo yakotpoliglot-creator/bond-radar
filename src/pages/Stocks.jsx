@@ -5,7 +5,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchStocks } from '../api/moex';
+import { fetchStocks, fetchSectors } from '../api/moex';
 import { Panel, Kpi, Loading, ErrorBox, Pager } from '../components/ui';
 import { nf, money, chgPill, chgStrA } from '../lib/format';
 
@@ -57,9 +57,19 @@ const COLS = {
     label: 'Капитализация', sort: s => s.capitalization ?? -1,
     cell: s => <span className="mono">{s.capitalization ? money(s.capitalization) : '—'}</span>,
   },
+  /* Отрасль приходит не из паспорта бумаги, а из состава отраслевых
+     индексов Мосбиржи — см. fetchSectors() в api/moex.js. Прочерк
+     означает, что биржа эту бумагу ни в один отраслевой индекс не
+     включает; выдумывать отрасль вместо прочерка мы не будем. */
+  sector: {
+    label: 'Сектор', sort: s => s.sector || '\uffff',
+    cell: s => (s.sector
+      ? <span className="tag">{s.sector}</span>
+      : <span className="c-3">—</span>),
+  },
 };
 
-const ORDER = ['secid', 'name', 'price', 'change', 'open', 'low', 'high', 'turnover', 'numTrades', 'capitalization'];
+const ORDER = ['secid', 'name', 'price', 'change', 'open', 'low', 'high', 'turnover', 'numTrades', 'capitalization', 'sector'];
 
 export default function StocksPage() {
   const nav = useNavigate();
@@ -75,8 +85,17 @@ export default function StocksPage() {
 
   async function load() {
     setLoading(true); setError(null);
-    try { setStocks(await fetchStocks()); }
-    catch (e) { setError(e); }
+    try {
+      /* Список бумаг и отрасли грузим параллельно. Если отраслевой
+         индекс не ответит, страница всё равно покажет акции — просто
+         с прочерками в колонке «Сектор». Отрасли важны, но не настолько,
+         чтобы из-за них пропадала вся таблица. */
+      const [list, sectors] = await Promise.all([
+        fetchStocks(),
+        fetchSectors().catch(() => ({})),
+      ]);
+      setStocks(list.map(s => ({ ...s, sector: sectors[s.secid] || null })));
+    } catch (e) { setError(e); }
     finally { setLoading(false); }
   }
 
@@ -114,6 +133,7 @@ export default function StocksPage() {
   const up = stocks.filter(s => s.change > 0).length;
   const down = stocks.filter(s => s.change < 0).length;
   const turnoverSum = stocks.reduce((a, s) => a + (s.turnover || 0), 0);
+  const withSector = stocks.filter(s => s.sector).length;
 
   const top10 = useMemo(
     () => [...stocks].sort((a, b) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 10),
@@ -156,6 +176,11 @@ export default function StocksPage() {
           sub={stocks.length ? nf(down / stocks.length * 100, 0) + '% рынка' : '—'}
         />
         <Kpi label="Оборот за день" value={money(turnoverSum)} sub="сумма по всем бумагам" />
+        <Kpi
+          label="Отрасль определена"
+          value={nf(withSector, 0)}
+          sub={`из ${nf(stocks.length, 0)} · состав отраслевых индексов MOEX`}
+        />
       </div>
 
       <Panel
