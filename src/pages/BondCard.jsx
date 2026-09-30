@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
 import { fetchBonds, fetchBondCard, fetchIssuerInfo, moexReportsUrl, moexIssueUrl } from '../api/moex';
-import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag } from '../components/ui';
+import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, timesWord } from '../components/ui';
 import { nf, money, date, dateShort, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
@@ -183,12 +183,16 @@ export default function BondCard() {
     }
 
     if (bond.durationDays != null) {
-      const lo = bond.durationDays * 0.75, hi = bond.durationDays * 1.25;
+      /* ±25% от дюрации — но у коротких бумаг это окно вырождается
+         в доли дня, и в «соседи» попадала случайная выборка. Поэтому
+         снизу окно не меньше 30 дней. */
+      const pad = Math.max(bond.durationDays * 0.25, 30);
+      const lo = bond.durationDays - pad, hi = bond.durationDays + pad;
       const g = others.filter(b => b.durationDays != null && b.durationDays >= lo && b.durationDays <= hi);
       if (g.length) {
         groups.push({
           title: 'Близкая дюрация',
-          desc: `${duration(bond.durationDays)} ± 25%`,
+          desc: `${duration(bond.durationDays)} ± ${Math.round(pad)} дн.`,
           list: g,
         });
       }
@@ -297,7 +301,15 @@ export default function BondCard() {
         <Kpi
           label="Цена, %"
           value={bond?.price == null ? '—' : nf(bond.price, 2)}
-          sub={bond?.priceChange == null ? 'от номинала' : (chgStrA(bond.priceChange) + ' за день')}
+          /* 548 выпусков из 3095 сегодня не торговались, и по ним биржа
+             отдаёт цену предыдущего дня. Показывать её как текущую —
+             значит выдать вчерашнее число за сегодняшнее, поэтому
+             говорим прямо, от какого дня цена и что изменения нет. */
+          sub={bond?.priceSrc === 'prev'
+            ? (bond?.priceChange == null
+              ? 'предыдущий торговый день, сегодня сделок не было'
+              : chgStrA(bond.priceChange) + ' за день')
+            : (bond?.priceChange == null ? 'от номинала' : (chgStrA(bond.priceChange) + ' за день'))}
         />
         <Kpi
           label="Доходность, %"
@@ -321,7 +333,7 @@ export default function BondCard() {
         />
         <Kpi
           label="Выплат в год"
-          value={paymentsPerYear == null ? '—' : nf(paymentsPerYear, paymentsPerYear < 10 ? 1 : 0)}
+          value={paymentsPerYear == null ? '—' : timesWord(paymentsPerYear)}
           sub={bond?.couponPeriod ? `период ${bond.couponPeriod} дн.` : 'по данным MOEX'}
         />
         <Kpi label="Дюрация" value={duration(bond?.durationDays)} sub={bond?.durationDays != null ? nf(bond.durationDays, 0) + ' дней' : '—'} />
@@ -470,7 +482,7 @@ export default function BondCard() {
                 {bond?.couponPercent != null
                   ? ` Купон ${nf(bond.couponPercent, 2)}% годовых`
                   : ' Купонная ставка MOEX не раскрыта'}
-                {paymentsPerYear != null ? `, выплаты ${nf(paymentsPerYear, paymentsPerYear < 10 ? 1 : 0)} раз в год` : ''}
+                {paymentsPerYear != null ? `, выплаты ${timesWord(paymentsPerYear)} в год` : ''}
                 {bond?.couponValue != null ? `, размер купона ${nf(bond.couponValue, 2)} ₽` : ''}.
               </p>
               <p>
@@ -505,6 +517,20 @@ export default function BondCard() {
           );
         })()}
       </Panel>
+
+      {/* Крот. Стоит внизу карточки и служит картинкой превью: тот же
+          файл указан в og:image, поэтому при отправке ссылки в мессенджер
+          подтягивается он же. Адрес относительный — Vite добавит базу
+          /bond-radar/ сам; в метатегах база прописана руками, потому что
+          внешние сервисы относительные пути не понимают. */}
+      <div style={{ marginTop: 14, textAlign: 'center' }}>
+        <img
+          src="krot.png"
+          alt=""
+          width={260}
+          style={{ maxWidth: '100%', height: 'auto', borderRadius: 10, opacity: 0.9 }}
+        />
+      </div>
     </div>
   );
 }

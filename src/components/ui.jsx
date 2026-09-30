@@ -51,6 +51,15 @@ export function LevelTag({ level }) {
   return <span className={'tag ' + cls}>{level ?? '—'}</span>;
 }
 
+/* «1 раз», «2 раза», «12 раз». Число выплат — это счётчик, а не измерение,
+   и запись «1,0» или «2,0 раз в год» читается как ошибка округления. */
+export function timesWord(n) {
+  const r = Math.round(n);
+  const tail = r % 100, last = r % 10;
+  const word = (tail >= 11 && tail <= 14) ? 'раз' : last === 1 ? 'раз' : last >= 2 && last <= 4 ? 'раза' : 'раз';
+  return r + ' ' + word;
+}
+
 export function YtmCell({ b }) {
   if (b.ytm == null) {
     return <span className="c-3" title="Доходность недоступна или аномальна">{b.ytmRaw != null ? 'н/д' : '—'}</span>;

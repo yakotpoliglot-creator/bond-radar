@@ -119,18 +119,28 @@ function normalize(s, m, y, board = 'TQCB') {
      сделки с доходностью последней сделки, а если торгов сегодня не
      было — цена предыдущего дня с доходностью предыдущего дня. */
   let price = null, rawYtm = null, priceSrc = null;
-  if (m?.LAST != null) {
+  if (m?.LAST != null && +m.LAST > 0) {
     price = +m.LAST; rawYtm = lastNum(m?.YIELD); priceSrc = 'today';
-  } else if (m?.MARKETPRICE != null) {
+  } else if (m?.MARKETPRICE != null && +m.MARKETPRICE > 0) {
     price = +m.MARKETPRICE; rawYtm = lastNum(m?.YIELD); priceSrc = 'today';
-  } else if (s.PREVPRICE != null) {
+  } else if (s.PREVPRICE != null && +s.PREVPRICE > 0) {
     price = +s.PREVPRICE; rawYtm = lastNum(m?.YIELD); priceSrc = 'prev';
-  } else if (s.PREVWAPRICE != null) {
+  } else if (s.PREVWAPRICE != null && +s.PREVWAPRICE > 0) {
     price = +s.PREVWAPRICE; rawYtm = lastNum(s.YIELDATPREVWAPRICE); priceSrc = 'prev';
   }
   if (price == null) price = lastNum(m?.LCLOSEPRICE, s.PREVPRICE, s.PREVWAPRICE);
+  if (!(price > 0)) price = null;
   if (rawYtm == null) rawYtm = lastNum(m?.YIELD, s.YIELDATPREVWAPRICE);
   // доходность и «здоровье» значения
+  /* НОЛЬ У БИРЖИ ЗНАЧИТ «ДАННЫХ НЕТ», А НЕ НОЛЬ.
+     По выпуску, где сегодня не было сделок, YIELD приходит ровно 0.
+     Мы печатали это как «доходность 0,00%» — инвестор читает как
+     настоящую нулевую доходность. В скринере так показывались
+     ОФЗ 29024, Сегежа3P5R, ПСБ 15 — то есть бумаги выглядели
+     заведомо убыточными. То же с DURATION = 0: ноль дюрации у бумаги
+     с погашением через десять лет — не факт, а отсутствие расчёта,
+     и таких выпусков 1388, они же сбивали подборку «близкая дюрация». */
+  if (rawYtm === 0) rawYtm = null;
   const ytmOk = rawYtm != null && rawYtm >= YTM_MIN && rawYtm <= YTM_MAX;
   /* Два поля доходности у биржи могут противоречить друг другу в разы:
      ВЭБ.РФ 19 — 0,50% против 170,43%, СистемБ1P4 — −7,23% против 6,70%.
@@ -154,7 +164,9 @@ function normalize(s, m, y, board = 'TQCB') {
 
   const kind = couponKind(s);
   const isAmort = (s.BONDTYPE || '').includes('Амортизируем');
-  const durationDays = m?.DURATION != null ? +m.DURATION : null;
+  /* DURATION = 0 — тоже «не посчитано» (см. комментарий у ytm выше). */
+  const durRaw = m?.DURATION != null ? +m.DURATION : null;
+  const durationDays = durRaw && durRaw > 0 ? durRaw : null;
 
   const matDate = s.MATDATE && s.MATDATE !== '0000-00-00' ? s.MATDATE : null;
   const offerDate = s.OFFERDATE && s.OFFERDATE !== '0000-00-00' ? s.OFFERDATE : null;
