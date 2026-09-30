@@ -45,11 +45,13 @@ export default function Placements() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [fetchedAt, setFetchedAt] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       setRows(await fetchPlacementNews());
+      setFetchedAt(new Date());
       setLoading(false);
     } catch (e) {
       setError(e); setLoading(false);
@@ -57,6 +59,17 @@ export default function Placements() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  /* Лента биржи обновляется в течение дня, а страница может висеть
+     открытой. Перечитываем раз в 10 минут — этого хватает: анонсы
+     сбора заявок появляются не чаще, чем раз в несколько часов.
+     При скрытой вкладке не дёргаем биржу впустую. */
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [load]);
 
   if (loading) return <Loading text="Загрузка анонсов размещений с Московской биржи…" />;
   if (error) return <ErrorBox error={error} onRetry={load} />;
@@ -71,9 +84,15 @@ export default function Placements() {
         <div className="page-s">
           Анонсы сбора заявок с новостной ленты Московской биржи
         </div>
-        <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+        <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn btn-sm" onClick={load}>↻ Обновить</button>
           <Link className="btn btn-sm" to="/screener">Скринер облигаций</Link>
+          {fetchedAt && (
+            <span className="c-3" style={{ fontSize: 11 }}>
+              получено с биржи в {String(fetchedAt.getHours()).padStart(2, '0')}:
+              {String(fetchedAt.getMinutes()).padStart(2, '0')} · обновляется само раз в 10 минут
+            </span>
+          )}
         </div>
       </div>
 

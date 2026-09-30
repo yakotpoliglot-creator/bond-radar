@@ -80,7 +80,7 @@ const FREQ_LABEL = {
    по которым фильтруем, чтобы результат можно было проверить глазами. */
 const SCREENER_COLS = [
   'name', 'ytm', 'zspread', 'coupon', 'currentYield',
-  'price', 'duration', 'mat', 'level', 'turnover',
+  'price', 'duration', 'mat', 'offer', 'couponsPerYear', 'level', 'turnover',
 ];
 
 /* Диапазонный фильтр: пустое поле — не ограничивает.

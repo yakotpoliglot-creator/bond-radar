@@ -68,12 +68,27 @@ export function YtmCell({ b }) {
 const COLS = {
   name: {
     label: 'Выпуск', sort: b => b.shortname,
+    /* Подстрока как у bondradar.pro: категория и уровень листинга.
+       Раньше здесь стоял ISIN — он и так виден в карточке выпуска,
+       а в списке из 3000 строк только мешал читать название. */
     cell: b => (
       <>
         <div style={{ fontWeight: 600 }}>{b.shortname}</div>
-        <div className="mono c-3" style={{ fontSize: 10 }}>{b.isin}</div>
+        <div className="c-3" style={{ fontSize: 10 }}>
+          {b.isOfz ? 'гос · ОФЗ' : b.isSubfederal ? 'гос · регион' : 'корп'}
+          {b.listLevel ? ` · ${b.listLevel} ур.` : ''}
+          {b.isCurrency && b.currency ? ` · ${b.currency}` : ''}
+        </div>
       </>
     ),
+  },
+  couponsPerYear: {
+    label: 'Купонов/год', sort: b => (b.couponPeriod ? 365 / b.couponPeriod : -1),
+    cell: b => {
+      const n = b.couponPeriod ? Math.round(365 / b.couponPeriod) : null;
+      if (!n) return <span className="c-3">—</span>;
+      return <span className="c-2">{n} раз</span>;
+    },
   },
   ytm: { label: 'YTM', sort: b => b.ytm ?? -999, cell: b => <YtmCell b={b} /> },
   coupon: {
