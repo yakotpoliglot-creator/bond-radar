@@ -305,7 +305,9 @@ export default function BondCard() {
           cls={ytmClass(bond?.ytm)}
           sub={bond?.ytm == null && bond?.ytmRaw != null
             ? `MOEX отдаёт недостоверное значение ${nf(bond.ytmRaw, 2)}%`
-            : (bond?.yieldDateType === 'OFFER' ? 'к оферте' : 'к погашению')}
+            : bond?.ytmSuspect
+              ? `биржа даёт два разных значения: ${nf(bond.ytm, 2)}% и ${nf(bond.ytmAlt, 2)}% — по неликвидным выпускам верного может не быть`
+              : (bond?.yieldDateType === 'OFFER' ? 'к оферте' : 'к погашению')}
         />
         <Kpi
           label="Купон, %"

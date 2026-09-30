@@ -104,10 +104,42 @@ function lastNum(...vals) {
 }
 
 function normalize(s, m, y, board = 'TQCB') {
-  const price = lastNum(m?.LAST, m?.LCLOSEPRICE, m?.MARKETPRICE, s.PREVPRICE, s.PREVWAPRICE);
-  const rawYtm = lastNum(s.YIELDATPREVWAPRICE, m?.YIELD);
+  /* ЦЕНА И ДОХОДНОСТЬ БЕРУТСЯ ПАРОЙ ИЗ ОДНОГО ИСТОЧНИКА.
+     Это не педантизм, а исправление настоящей ошибки. Раньше цена
+     выбиралась по списку LAST → LCLOSEPRICE → MARKETPRICE → PREVPRICE
+     → PREVWAPRICE, а доходность отдельным списком YIELDATPREVWAPRICE →
+     YIELD. Два числа при этом описывали РАЗНЫЕ цены.
+
+     Живой пример: Ситимат01. PREVWAPRICE = 19,91, от неё биржа считает
+     YIELDATPREVWAPRICE = 59,58%. А цена в карточке показывалась 98,9
+     (из MARKETPRICE). Инвестор видел бумагу у номинала с доходностью
+     59,58% — числа, которые друг к другу не относятся.
+
+     Поэтому теперь цена и доходность идут одной парой: цена последней
+     сделки с доходностью последней сделки, а если торгов сегодня не
+     было — цена предыдущего дня с доходностью предыдущего дня. */
+  let price = null, rawYtm = null, priceSrc = null;
+  if (m?.LAST != null) {
+    price = +m.LAST; rawYtm = lastNum(m?.YIELD); priceSrc = 'today';
+  } else if (m?.MARKETPRICE != null) {
+    price = +m.MARKETPRICE; rawYtm = lastNum(m?.YIELD); priceSrc = 'today';
+  } else if (s.PREVPRICE != null) {
+    price = +s.PREVPRICE; rawYtm = lastNum(m?.YIELD); priceSrc = 'prev';
+  } else if (s.PREVWAPRICE != null) {
+    price = +s.PREVWAPRICE; rawYtm = lastNum(s.YIELDATPREVWAPRICE); priceSrc = 'prev';
+  }
+  if (price == null) price = lastNum(m?.LCLOSEPRICE, s.PREVPRICE, s.PREVWAPRICE);
+  if (rawYtm == null) rawYtm = lastNum(m?.YIELD, s.YIELDATPREVWAPRICE);
   // доходность и «здоровье» значения
   const ytmOk = rawYtm != null && rawYtm >= YTM_MIN && rawYtm <= YTM_MAX;
+  /* Два поля доходности у биржи могут противоречить друг другу в разы:
+     ВЭБ.РФ 19 — 0,50% против 170,43%, СистемБ1P4 — −7,23% против 6,70%.
+     Это не наш расчёт, это два числа самой биржи, и по неликвидным
+     выпускам верного среди них может не быть вовсе. Молча показать одно
+     из них — значит выдать случайное число за факт. Поэтому помечаем
+     расхождение и говорим об этом в интерфейсе. */
+  const ytmAlt = lastNum(m?.YIELD, s.YIELDATPREVWAPRICE);
+  const ytmSuspect = rawYtm != null && ytmAlt != null && Math.abs(rawYtm - ytmAlt) > 10;
   const ytm = ytmOk ? rawYtm : null;
   /* Отдельная проверка ИМЕННО биржевого поля YIELD. Z-спред биржа считает
      от него, а наша доходность выше берётся в первую очередь из
@@ -141,6 +173,10 @@ function normalize(s, m, y, board = 'TQCB') {
     isSubfederal: isSubfederal(s.REGNUMBER),
 
     price,
+    /* Откуда цена: 'today' — сделка текущей сессии, 'prev' — предыдущий
+       торговый день. Нужно, чтобы интерфейс не выдавал вчерашнюю цену
+       за сегодняшнюю: 548 выпусков из 3095 сегодня не торговались. */
+    priceSrc,
     /* Изменение цены за день. Важно: LASTCHANGEPRCNT здесь НЕ подходит —
        это изменение последней сделки к предыдущей сделке, то есть шаг
        между двумя тиками. Проверка на живых данных: LASTCHANGEPRCNT
@@ -160,6 +196,8 @@ function normalize(s, m, y, board = 'TQCB') {
     ytm,
     ytmRaw: rawYtm,
     ytmOk,
+    ytmSuspect,
+    ytmAlt,
     yieldDateType: y?.YIELDDATETYPE || null,   // MATDATE | OFFER | MBS
 
     couponPercent: s.COUPONPERCENT != null ? +s.COUPONPERCENT : null,
