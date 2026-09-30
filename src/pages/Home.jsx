@@ -6,19 +6,51 @@ import {
   fetchIndexHistory,
   fetchIndexValues,
   fetchStocks,
+  fetchTickerCurrencies,
+  TICKER_FX,
   KEY_RATE,
   KEY_RATE_HISTORY,
 } from '../api/moex';
 import { Kpi, Panel, Loading, ErrorBox, BondTable } from '../components/ui';
 import { IndexCard, RatesNow, TopByYtm } from '../components/market';
-import { nf, dateShort, chgStrA, chgClass, chgPill } from '../lib/format';
+import MarketMap from '../components/MarketMap';
+import { nf, dateShort, chgStrA, chgClass } from '../lib/format';
 
 /* ── Бегущая строка рынка ──────────────────────────────────────────
-   Приём с bondradar.pro: индексы и самые торгуемые акции идут одной
-   лентой, у каждого изменения — треугольник и цвет. Данные живые,
-   из MOEX: индексы берём из общего списка индексов, акции — из TQBR.
-   Лента не заменяет KPI-строку, а даёт быстрый взгляд «что сегодня
-   двигается» до того, как читать таблицы. */
+   Приём с bondradar.pro, повторённый по ИХ КОДУ (app-main.js), а не по
+   догадке — разведка целиком в scripts/probe*.mjs и в журнале.
+
+   Состав — ровно их TICKER_CONFIG: четыре индекса и четыре акции,
+   закреплённые поимённо (Сбер, Т-Техно, Роснефть, Лукойл). В журнале
+   было записано «три акции» — в оригинале их четыре, и IMOEX в ленте
+   тоже есть; проверено выгрузкой их конфига.
+
+   Валюты у оригинала стоят отдельным блоком слева и не бегут. На узком
+   экране (<720px) блок скрыт, а курсы встают в начало ленты — их
+   brNarrow720() и mobFx.concat(...). Здесь сделано так же.
+
+   Движение — Web Animations API по transform, 32 px/с, с сохранением
+   фазы. Почему не @keyframes и не пауза при наведении: оригинал прошёл
+   этот путь и вернулся — их комментарии в коде перечисляют четыре
+   захода на CSS-анимации (браузер вправе её придушить или заморозить, и
+   об этом даже не узнаешь), заход на покадровый rAF в главном потоке
+   (дёргался, пока страница разбирала 750 КБ биржевого JSON) и паузу по
+   наведению (на тач-устройствах :hover залипает после тапа — строка
+   вставала навсегда). Итог у них: композиторная анимация, копий ровно
+   столько, чтобы закрыть экран, фаза переносится при обновлении цен, и
+   сторож раз в 2,5 с перезапускает ленту, если позиция перестала
+   меняться. Всё это повторено ниже. */
+const TK_SPEED = 32;       // пикселей в секунду — та же скорость, что у оригинала
+const TK_FLAT = 0.05;      // порог «плоско» в ленте: ниже него стрелки нет (их же порог)
+const TK_FX_FLAT = 0.01;   // у валют порог мельче: курс ЦБ меняется в сотые доли
+const TK_WATCH_MS = 2500;  // как часто сторож проверяет, что лента едет
+const TK_MOBILE_PX = 720;  // на этом и уже — валюты уезжают в ленту, как у оригинала
+
+/* Диагностика ленты: с «?tkdebug=1» в заголовке вкладки видно реальный
+   сдвиг ленты и число копий. Нужна затем, чтобы утверждение «лента едет»
+   проверялось фактом, а не на глаз (у оригинала для этого флаг _tkRaf). */
+const TK_DEBUG = typeof location !== 'undefined' && /[?&]tkdebug=1/.test(location.search);
+
 const TICKER_INDEXES = [
   { secid: 'IMOEX', label: 'IMOEX' },
   /* В бегущей строке у оригинала стоят ДРУГИЕ индексы, чем в блоках ниже:
@@ -31,40 +63,246 @@ const TICKER_INDEXES = [
   { secid: 'RUCBHYCP', label: 'ВДО' },
 ];
 
-function Ticker({ rates, stocks }) {
+/* Четыре акции оригинала — их TICKER_CONFIG: SBER, T (у них подписано
+   «Т-Техно»), ROSN, LKOH. Именно закреплённые, а не «пятёрка по обороту»:
+   состав ленты не должен меняться от дня к дню, иначе числа не с чем
+   сравнивать. Т-Техно на бирже торгуется под кодом T. */
+const TICKER_STOCKS = [
+  { secid: 'SBER', label: 'Сбер' },
+  { secid: 'T', label: 'Т-Техно' },
+  { secid: 'ROSN', label: 'Роснефть' },
+  { secid: 'LKOH', label: 'Лукойл' },
+];
+
+/** Изменение в ленте: «▲ +1,06 %» / «▼ −0,38 %» / «−0,04 %» без стрелки.
+    Порог и вид стрелки у оригинала разные для ленты и для блока валют:
+    в ленте ▲/▼ и порог 0,05 п.п., у валют ↑/↓ и порог 0,01 — у курса ЦБ
+    изменение обычно в сотые доли процента, и там стрелка нужна. */
+function tkChg(pct, { flat = TK_FLAT, arrows = ['▲', '▼'] } = {}) {
+  if (pct == null || Number.isNaN(+pct)) return { cls: '', arrow: '', text: '' };
+  const v = +pct;
+  const cls = v > flat ? 'tk-up' : v < -flat ? 'tk-dn' : 'tk-flat';
+  const arrow = v > flat ? arrows[0] : v < -flat ? arrows[1] : '';
+  return { cls, arrow, text: (v >= 0 ? '+' : '') + nf(v, 2) + '%' };
+}
+
+/** Узкий ли экран. Тот же порог, что у оригинала (их brNarrow720). */
+function useNarrow(px) {
+  const query = `(max-width: ${px}px)`;
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia(query).matches,
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia(query);
+    const onChange = e => setNarrow(e.matches);
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else mq.addListener(onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+      else mq.removeListener(onChange);
+    };
+  }, [query]);
+
+  return narrow;
+}
+
+/* ── Движок ленты: сколько копий везти и как ───────────────────────
+   Возвращает число копий набора, которые надо отрисовать. Вся логика —
+   повтор их tkNeededCopies / tkMeasure / tkEngineStart / сторожа. */
+function useTickerEngine(innerRef, viewRef, sig, count) {
+  const [copies, setCopies] = useState(1);
+  const halfRef = useRef(0);
+  const animRef = useRef(null);
+
+  /* Мерка одного набора и расчёт копий.
+     Копий должно хватать, чтобы ЗАКРЫТЬ экран в самой дальней точке
+     цикла: набор + ширина видимой ленты. Двух копий не хватало на
+     широких мониторах — справа оставалась пустая чёрная полоса (их
+     замер: набор 1479 px на экране 2560 оставлял 618 px пустоты). */
+  const measure = useCallback(() => {
+    const el = innerRef.current;
+    const view = viewRef.current;
+    if (!el || !view) return 0;
+    const n = copies > 0 ? copies : 1;
+    const setW = el.scrollWidth / n;
+    const stripW = view.getBoundingClientRect().width;
+    if (!(setW > 0) || !(stripW > 0)) return 0;
+    const need = Math.max(2, Math.ceil((setW + stripW) / setW));
+    if (need !== copies) { setCopies(need); return 0; }  // перерисуем и измерим заново
+    return setW;
+  }, [copies, innerRef, viewRef]);
+
+  /* Запуск движения. Фазу переносим: если цены обновились и ширина
+     набора изменилась, лента продолжает с того же места, а не прыгает
+     в начало (их же приём — prev.currentTime). */
+  const start = useCallback(() => {
+    const el = innerRef.current;
+    if (!el || typeof el.animate !== 'function') return;
+    const setW = measure();
+    if (!setW) return;
+    halfRef.current = setW;
+    const dur = (setW / TK_SPEED) * 1000;
+    const prev = typeof el.getAnimations === 'function' ? el.getAnimations()[0] : null;
+    const phase = prev ? (prev.currentTime || 0) : 0;
+    if (prev) prev.cancel();
+    el.style.transform = '';
+    const anim = el.animate(
+      [{ transform: 'translate3d(0,0,0)' }, { transform: `translate3d(${-setW}px,0,0)` }],
+      { duration: dur, iterations: Infinity, easing: 'linear' },
+    );
+    if (phase) anim.currentTime = phase % dur;
+    animRef.current = anim;
+  }, [measure, innerRef]);
+
+  useEffect(() => {
+    const el = innerRef.current;
+    if (!el || !count) return undefined;
+
+    start();
+
+    /* Возврат из фона и из bfcache: браузер вправе остановить анимацию,
+       и это нормально — просто запускаем заново. */
+    const onVis = () => { if (!document.hidden) start(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('pageshow', start);
+    window.addEventListener('focus', start);
+
+    /* Сторож позиции: смотрим РЕАЛЬНЫЙ сдвиг, а не состояние анимации.
+       Не сдвинулась дважды подряд — перезапускаем. Так лечится любая
+       причина остановки, и не нужно каждый раз выяснять, кто заморозил. */
+    let lastX = null;
+    let slow = 0;
+    const watch = setInterval(() => {
+      if (document.hidden) return;
+      const x = el.getBoundingClientRect().left;
+      if (TK_DEBUG) {
+        document.title = `tk ${x.toFixed(1)}px · копий ${copies} · набор ${Math.round(halfRef.current)}px`;
+      }
+      if (lastX != null && Math.abs(x - lastX) < 0.5) {
+        slow += 1;
+        if (slow >= 2) { slow = 0; lastX = null; start(); return; }
+      } else {
+        slow = 0;
+      }
+      lastX = x;
+    }, TK_WATCH_MS);
+
+    window.addEventListener('resize', start);
+
+    /* Ширины ячеек меняются сами: подгрузился шрифт, обновились цены.
+       Тогда набор стал другой длины — пересобираем анимацию, фазу храним. */
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => start());
+      ro.observe(el);
+    }
+
+    return () => {
+      clearInterval(watch);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pageshow', start);
+      window.removeEventListener('focus', start);
+      window.removeEventListener('resize', start);
+      if (ro) ro.disconnect();
+      const a = animRef.current;
+      if (a) a.cancel();
+      animRef.current = null;
+    };
+  }, [sig, count, copies, start, innerRef]);
+
+  return copies;
+}
+
+function MarketTicker({ rates, stocks, fx }) {
+  const isMobile = useNarrow(TK_MOBILE_PX);
+  const innerRef = useRef(null);
+  const viewRef = useRef(null);
+
   const items = useMemo(() => {
     const out = [];
     for (const t of TICKER_INDEXES) {
       const r = rates?.[t.secid];
       if (r?.value != null) {
-        out.push({ key: t.secid, label: t.label, value: r.value, pct: r.changePct, dec: r.decimals ?? 2 });
+        out.push({ key: t.secid, name: t.label, val: nf(r.value, r.decimals ?? 2), pct: r.changePct });
       }
     }
-    /* Пять самых торгуемых акций дня — по обороту, а не по капитализации:
-       в ленте интересно то, что реально покупали и продавали сегодня. */
-    const top = (stocks || [])
-      .filter(s => s.price != null && s.change != null)
-      .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
-      .slice(0, 5);
-    for (const s of top) {
-      out.push({ key: s.secid, label: s.shortname, value: s.price, pct: s.change, dec: 2, unit: '₽' });
+    /* Цена и изменение акции — та же пара, что и в таблицах: LAST и
+       LASTTOPREVPRICE. Если сделок сегодня не было, изменения нет, и
+       лента честно показывает «—», а не ноль. */
+    for (const t of TICKER_STOCKS) {
+      const s = (stocks || []).find(x => x.secid === t.secid);
+      if (s?.price != null) {
+        out.push({ key: t.secid, name: t.label, val: nf(s.price, 2) + ' ₽', pct: s.change });
+      }
     }
     return out;
   }, [rates, stocks]);
 
-  if (!items.length) return null;
+  const fxItems = useMemo(() => TICKER_FX
+    .map(f => {
+      const r = fx?.[f.code];
+      if (!r || r.value == null) return null;
+      return {
+        key: 'fx-' + f.code,
+        name: `${f.symbol} ${f.code}`,
+        val: nf(r.value, 2) + ' ₽',
+        pct: r.changePct,
+        src: r.sourceLabel,
+        date: r.date,
+      };
+    })
+    .filter(Boolean), [fx]);
+
+  /* На узком экране статичный блок валют скрыт, а курсы встают в начало
+     ленты — как у оригинала на мобиле. */
+  const cells = useMemo(
+    () => (isMobile ? [...fxItems, ...items] : items),
+    [isMobile, fxItems, items],
+  );
+
+  const sig = useMemo(() => cells.map(c => c.key).join('|'), [cells]);
+  const copies = useTickerEngine(innerRef, viewRef, sig, cells.length);
+
+  if (!cells.length) return null;
+
+  const fxTitle = fxItems
+    .map(f => `${f.name} ${f.val} ${f.src || ''} ${f.date || ''}`.trim())
+    .join(' · ');
 
   return (
-    <div className="ticker" role="list" aria-label="Котировки рынка">
-      {items.map(it => (
-        <div className="ticker-i" role="listitem" key={it.key}>
-          <span className="ticker-n">{it.label}</span>
-          <span className="ticker-v">
-            {nf(it.value, it.dec)}{it.unit ? ' ' + it.unit : ''}
-          </span>
-          <span className={chgPill(it.pct)}>{chgStrA(it.pct)}</span>
+    <div className="tk-strip" role="region" aria-label="Котировки рынка">
+      {!isMobile && fxItems.length ? (
+        <div className="tk-fx" title={fxTitle}>
+          {fxItems.map(f => {
+            const c = tkChg(f.pct, { flat: TK_FX_FLAT, arrows: ['↑', '↓'] });
+            return (
+              <div className="tk-fx-item" key={f.key}>
+                <div className="tk-fx-lbl">{f.name}</div>
+                <div className="tk-fx-rate">{f.val}</div>
+                <div className={'tk-fx-chg ' + c.cls}>{c.arrow} {c.text}</div>
+              </div>
+            );
+          })}
         </div>
-      ))}
+      ) : null}
+
+      <div className="tk-view" ref={viewRef}>
+        <div className="tk-inner" ref={innerRef}>
+          {Array.from({ length: copies }, (_, copy) => cells.map(cell => {
+            const c = tkChg(cell.pct);
+            return (
+              <div className="tk-item" key={copy + '|' + cell.key} aria-hidden={copy > 0 ? 'true' : undefined}>
+                <span className="tk-name">{cell.name}</span>
+                <span className="tk-val">{cell.val}</span>
+                {c.text ? <span className={'tk-chg ' + c.cls}>{c.arrow} {c.text}</span> : null}
+              </div>
+            );
+          }))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -76,17 +314,11 @@ function Ticker({ rates, stocks }) {
      1. KPI-строка: ключевая ставка, RGBI, индекс корпоратов, число выпусков
      2. Кривая доходности ОФЗ (линия, ось X — срок в годах)
      3. История индекса RGBI (~120 дней)
-     4. Карта рынка «доходность × срок» (scatter, клик → карточка выпуска)
+     4. Карта рынка «доходность × срок» (SVG: зум, панорама, клик → карточка)
      5. Топ-10 выпусков по обороту (BondTable)
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── Группы точек на карте рынка ─────────────────────────────────── */
-const GROUPS = {
-  ofz: { label: 'ОФЗ', colorVar: '--blue' },
-  corp: { label: 'Корпораты', colorVar: '--green' },
-  vdo: { label: 'ВДО', colorVar: '--red' },
-};
-
 const GROUP_CHIPS = [
   ['all', 'Все'],
   ['ofz', 'Гос'],
@@ -231,24 +463,27 @@ export default function Home() {
   const [corp, setCorp] = useState(null);
   const [rates, setRates] = useState(null);
   const [stocks, setStocks] = useState(null);
+  const [fx, setFx] = useState(null);
   const [group, setGroup] = useState('all');
 
   const curveCanvas = useRef(null);
   const rgbiCanvas = useRef(null);
-  const scatterCanvas = useRef(null);
 
   /* ── Загрузка: всё параллельно, каждая часть изолирована ────────── */
   const load = useCallback(async () => {
     setLoading(true);
     setFatal(null);
 
-    const [c, r, ci, b, rt, st] = await Promise.all([
+    const [c, r, ci, b, rt, st, fxr] = await Promise.all([
       fetchYieldCurve().catch(() => null),
       fetchIndexHistory('RGBI').catch(() => null),
       loadCorpIndex().catch(() => null),
       fetchBonds().catch(() => null),
       fetchIndexValues().catch(() => null),
       fetchStocks().catch(() => null),
+      /* Курс ЦБ для полосы валют. Падение этого запроса фатальным не
+         считается: лента индексов и акций живёт и без курса. */
+      fetchTickerCurrencies().catch(() => null),
     ]);
 
     setCurve(c && c.length ? c : null);
@@ -257,6 +492,7 @@ export default function Home() {
     setBonds(b && b.length ? b : null);
     setRates(rt);
     setStocks(st && st.length ? st : null);
+    setFx(fxr);
 
     // Фатально, только если не пришло вообще ничего — иначе показываем
     // рабочие блоки, а упавшие панели помечаем как недоступные.
@@ -291,23 +527,32 @@ export default function Home() {
     return [...bonds].sort((a, b) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 10);
   }, [bonds]);
 
-  /* ── Точки карты рынка ──────────────────────────────────────────── */
+  /* ── Точки карты рынка ────────────────────────────────────────────
+     Отбор по правилам, подписи и вся возня с зумом живут в
+     components/MarketMap.jsx. Здесь — только подготовка данных: срок до
+     ближайшей даты возврата и поля, нужные карте для правил и подсказки. */
   const scatterPoints = useMemo(() => {
     if (!bonds) return [];
     const out = [];
     for (const b of bonds) {
       if (b.ytm == null || !b.matDate) continue;
-      const x = horizonYears(b);
-      if (x == null || x < 0 || x > 30) continue;
+      const mapTerm = horizonYears(b);
+      if (mapTerm == null || mapTerm < 0 || mapTerm > 30) continue;
       out.push({
-        x,
-        y: b.ytm,
         isin: b.isin,
         secid: b.secid,
         shortname: b.shortname,
         group: groupOf(b),
         listLevel: b.listLevel,
         turnover: b.turnover || 0,
+        ytm: b.ytm,
+        mapTerm,
+        price: b.price,
+        numTrades: b.numTrades,
+        durationDays: b.durationDays,
+        couponKind: b.couponKind,
+        bondType: b.bondType,
+        isCurrencyBond: b.isCurrencyBond,
       });
     }
     return out;
@@ -430,72 +675,9 @@ export default function Home() {
     return () => chart.destroy();
   }, [rgbi, theme]);
 
-  /* ═══════════════ График 3: карта рынка (scatter) ════════════════ */
-  useEffect(() => {
-    const canvas = scatterCanvas.current;
-    if (!canvas) return;
-
-    const p = palette();
-    const visible = scatterPoints.filter(pt => group === 'all' || pt.group === group);
-    // Пустая выборка — график не строим (иначе Chart.js рисует пустую ось).
-    if (!visible.length) return;
-    const keys = Object.keys(GROUPS).filter(k => visible.some(pt => pt.group === k));
-
-    const opts = baseOptions(p, { yTitle: 'Доходность, %', xTitle: 'Срок, лет' });
-    opts.interaction = { mode: 'nearest', intersect: true };
-    opts.plugins.legend.display = true;
-    opts.plugins.tooltip.callbacks = {
-      title: items => visible.filter(pt => pt.group === keys[items[0].datasetIndex])[items[0].dataIndex]?.shortname || '',
-      label: ctx => {
-        const pt = visible.filter(x => x.group === keys[ctx.datasetIndex])[ctx.dataIndex];
-        if (!pt) return '';
-        return [
-          `${pt.isin}`,
-          `Доходность: ${nf(pt.y, 2)}%`,
-          `Срок: ${nf(pt.x, 2)} лет`,
-          `Листинг: ${pt.listLevel ?? '—'}`,
-        ];
-      },
-    };
-    opts.scales.x.min = 0;
-    opts.scales.x.max = 30;
-    opts.scales.x.ticks.stepSize = 2;
-    opts.scales.y.ticks.callback = v => `${v}%`;
-    // Курсор-указатель над точкой.
-    opts.onHover = (evt, elements) => {
-      evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
-    };
-    // Клик по точке → карточка выпуска.
-    opts.onClick = (evt, elements, chart) => {
-      const hit = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
-      const el = hit.length ? hit[0] : elements[0];
-      if (!el) return;
-      const pt = visible.filter(x => x.group === keys[el.datasetIndex])[el.index];
-      if (pt?.isin) location.hash = '#/bond/' + pt.isin;
-    };
-
-    const datasets = keys.map(k => {
-      const pts = visible.filter(pt => pt.group === k);
-      const color = cssVar(GROUPS[k].colorVar, p.text2);
-      return {
-        label: `${GROUPS[k].label} (${pts.length})`,
-        data: pts,
-        backgroundColor: color,
-        borderColor: color,
-        pointRadius: 2.6,
-        pointHoverRadius: 5,
-        showLine: false,
-      };
-    });
-
-    const chart = new Chart(canvas.getContext('2d'), {
-      type: 'scatter',
-      data: { datasets },
-      options: opts,
-    });
-
-    return () => chart.destroy();
-  }, [scatterPoints, group, theme]);
+  /* Карты рынка здесь больше нет: она переехала в components/MarketMap.jsx
+     и рисуется на SVG. Chart.js не умеет ни зум вокруг курсора, ни подписи
+     бумаг на облаке точек — а именно этого карте и не хватало. */
 
   /* ── Группы для таблиц «топ по доходности» ─────────────────────── *
    * Регионы отличаем по формату регистрационного номера (RU + 5 цифр
@@ -580,7 +762,7 @@ export default function Home() {
       </div>
 
       {/* ── Бегущая строка рынка ──────────────────────────────────── */}
-      <Ticker rates={rates} stocks={stocks} />
+      <MarketTicker rates={rates} stocks={stocks} fx={fx} />
 
       {/* ── 1. KPI ────────────────────────────────────────────────── */}
       <div style={kpiGrid}>
@@ -695,17 +877,9 @@ export default function Home() {
           </div>
         }
       >
-        {scatterPoints.filter(pt => group === 'all' || pt.group === group).length
-          ? (
-            <>
-              <ChartBox height={380}><canvas ref={scatterCanvas} /></ChartBox>
-              <div className="c-3" style={{ fontSize: 11, marginTop: 8 }}>
-                Каждая точка — выпуск: правее — длиннее срок, выше — больше доходность.
-                Клик по точке открывает карточку выпуска. Показано {scatterPoints.filter(pt => group === 'all' || pt.group === group).length} из {scatterPoints.length}.
-              </div>
-            </>
-          )
-          : <div className="empty">В выбранной группе нет выпусков с рассчитанной доходностью и сроком</div>}
+        {/* Карта — своя отрисовка на SVG (components/MarketMap.jsx):
+            зум колесом, панорама, подсказка и клик по отдельной точке. */}
+        <MarketMap points={scatterPoints} group={group} curve={curve} />
       </Panel>
 
       {/* ── 5. Популярные выпуски ─────────────────────────────────── */}

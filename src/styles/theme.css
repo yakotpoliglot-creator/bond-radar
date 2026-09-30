@@ -331,39 +331,188 @@ table.tbl tbody tr { cursor: pointer; }
 }
 
 /* ═══════════════════ Бегущая строка рынка ═══════════════════════
-   Индексы и самые торгуемые акции одной лентой — быстрый взгляд
-   «что сегодня двигается» до чтения таблиц. Переносится по строкам,
-   а не прокручивается: прокрутка на телефоне мешает попадать пальцем,
-   а данных здесь немного. */
-.ticker {
+   Тёмная полоса с лентой: слева неподвижный блок курса ЦБ, правее
+   бесконечно едет лента индексов и акций. Метрики взяты из CSS
+   оригинала один в один: высота 44px, фон #111, ячейка — padding 0 20px
+   и волосяная линия справа, подпись 10px в 45% белого, значение
+   моноширинным 700, изменение 10px. Цвета изменения тоже их:
+   #4ade80 вверх, #f87171 вниз, 40% белого «плоско».
+
+   Единственное отступление — рамка и скругление: у оригинала полоса
+   во всю ширину экрана под шапкой, у нас она живёт в карточке, поэтому
+   скруглена по общему языку сайта. Внутренние размеры не тронуты.
+
+   Движением управляет КОД (useTickerEngine в Home.jsx), а не CSS-анимация:
+   см. комментарий там — это повтор решения оригинала, который прошёл
+   через шесть заходов и вернулся к анимации на композиторе. */
+.tk-strip {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  height: 44px;
+  margin-bottom: 14px;
+  background: #111;
+  color: #fff;
+  border: 1px solid #222;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* ── Неподвижный блок валют ────────────────────────────────────── */
+.tk-fx {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  background: #111;
+  border-right: 1px solid #2a2a2a;
+}
+.tk-fx-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 12px;
+  border-right: 1px solid #222;
+  line-height: 1.15;
+  min-width: 0;
+}
+.tk-fx-item:last-child { border-right: 0; }
+.tk-fx-lbl {
+  font-size: 9px;
+  color: rgba(255, 255, 255, .4);
+  font-weight: 600;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tk-fx-rate {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tk-fx-chg {
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-height: 11px;
+}
+
+/* ── Лента ─────────────────────────────────────────────────────── */
+.tk-view {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  min-width: 0;
+}
+.tk-inner {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  white-space: nowrap;
+  will-change: transform;
+}
+.tk-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 100%;
+  padding: 0 20px;
+  font-size: 11px;
+  border-right: 1px solid #2a2a2a;
+}
+.tk-name {
+  color: rgba(255, 255, 255, .45);
+  font-size: 10px;
+  font-weight: 500;
+}
+.tk-val {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.tk-chg {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.tk-up { color: #4ade80; }
+.tk-dn { color: #f87171; }
+.tk-flat { color: rgba(255, 255, 255, .4); }
+
+/* Тёмная тема: у оригинала полоса не «выключается», а становится
+   чуть темнее фона (body.thm-dark .tk-fx{background:#0e100d}). */
+html[data-theme="dark"] .tk-strip,
+html[data-theme="dark"] .tk-fx {
+  background: #0e100d;
+  border-color: #2b2f28;
+}
+html[data-theme="dark"] .tk-fx-item { border-right-color: #2b2f28; }
+html[data-theme="dark"] .tk-item { border-right-color: #2b2f28; }
+
+/* ── Мобильные правила — ровно те, что у оригинала ───────────────
+   @media (max-width:720px): статичный блок валют скрыт (курсы уезжают
+   в саму ленту, это делает useNarrow в Home.jsx), а лента получает
+   аппаратный слой. Их комментарий: «аппаратный слой бегущей строки —
+   лечит заморозку CSS-анимации в мобильном Safari (десктоп-рендер не
+   трогаем, там бага нет)». Отдельных @keyframes для мобилы у оригинала
+   НЕТ — движок тот же, меняются только эти два правила. */
+@media (max-width: 720px) {
+  .tk-fx { display: none !important; }
+  .tk-inner {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    will-change: transform;
+  }
+  .tk-item { padding: 0 14px; }
+}
+
+/* ═══════════════════ Карта рынка (SVG) ═══════════════════
+   Своя отрисовка вместо Chart.js: нужны зум вокруг курсора, панорама,
+   подписи бумаг прямо на карте и подсказка на наведении. Размеры холста
+   и отступы повторяют оригинал (viewBox 1120×320). */
+.mm-box { position: relative; }
+.mm-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* Панорама тянется мышью — выделять текст при этом не нужно. */
+  user-select: none;
+  cursor: crosshair;
+}
+.mm-tip {
+  position: absolute;
+  z-index: 5;
+  max-width: 260px;
+  padding: 7px 9px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .14);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text2);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.mm-tip b { color: var(--text); }
+.mm-foot {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 20px;
-  padding: 9px 14px;
-  margin-bottom: 14px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  gap: 6px 14px;
+  margin-top: 8px;
 }
-.ticker-i {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-}
-.ticker-n {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text2);
-  letter-spacing: 0.2px;
-}
-.ticker-v {
-  font-family: var(--mono);
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
+/* На телефоне карта узкая: подписи в 8,5px превращаются в пыль и только
+   мешают точкам. Сама карта остаётся — прятать её целиком, как сделано
+   у оригинала, значит молча отобрать раздел у мобильных читателей. */
+@media (max-width: 720px) {
+  .mm-label { display: none; }
+  .mm-svg { cursor: default; }
 }
 
 /* ═══════════════════ Пояснения списком ═══════════════════

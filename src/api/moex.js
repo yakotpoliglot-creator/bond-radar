@@ -629,6 +629,157 @@ export async function fetchIndexValues() {
   return out;
 }
 
+/* ── валюты бегущей строки: КУРС ЦБ РФ ───────────────────────────── *
+ *
+ * Разведано на живых источниках и на самом оригинале (scripts/probe*.mjs,
+ * см. журнал, раздел «Тикер»). Главное, что выяснилось: в полосе валют
+ * у bondradar.pro стоит НЕ биржевая цена, а КУРС ЦБ. Это видно прямо в
+ * их коде — ensureFX() тянет cbr-xml-daily.ru/daily_json.js, и их числа
+ * (84,43 +0,02 % · 96,06 −0,19 % · 12,58 +0,11 %) — это ровно курс ЦБ.
+ *
+ * Поэтому и мы показываем курс ЦБ, но без сторонних зеркал — из
+ * официального источника Мосбиржи:
+ *
+ *   · доллар и евро — блок cbrf эндпоинта
+ *     /iss/statistics/engines/currency/markets/selt/rates.json.
+ *     Там курс ЦБ лежит вместе со СВОИМ процентом к предыдущему курсу
+ *     (CBRF_USD_LAST / CBRF_USD_LASTCHANGEPRCNT), поэтому пара
+ *     «значение + процент» взята из одного места, а не собрана из двух
+ *     (см. «Грабли», п.2 — цена и доходность обязаны быть из одного
+ *     источника). Сверено с полосой оригинала в один момент времени:
+ *     84,4283 (+0,0208 %) и 96,0625 (−0,1874 %) — совпало до сотых.
+ *
+ *   · юань — курса ЦБ в блоке cbrf НЕТ вовсе: там публикуются только
+ *     USD и EUR (проверено; параметр date блок не расширяет). Ближайшее
+ *     официальное — фиксинг Мосбиржи CNYFIXME. Берём его вместе с
+ *     предыдущим фиксингом из истории и считаем процент сами:
+ *     12,5720 против 12,5591 = +0,10 %. У ЦБ на ту же дату 12,5764
+ *     (+0,11 %) — расхождение в одну копейку, и оно не выдумано: это
+ *     разные величины, и в интерфейсе юань подписан «фиксинг MOEX»,
+ *     а не «курс ЦБ».
+ *
+ * Почему не живая биржевая цена (CETS), как предполагал журнал: у евро
+ * в тот момент вообще не было сделок (NUMTRADES = 0, LAST = null), и
+ * любая пара «фиксинг сегодня / последняя сделка вчера» давала бы
+ * +0,46 % вместо настоящих −0,19 % — то есть противоположный знак.
+ * Курс ЦБ и меняется раз в сутки, и одинаков у всех, кто его показывает.
+ *
+ * Живой биржевой курс остаётся доступен отдельно (fetchCurrencyMarket)
+ * и используется как запасной вариант, если блок курса ЦБ не ответил.
+ */
+export const TICKER_FX = [
+  { code: 'USD', symbol: '$' },
+  { code: 'EUR', symbol: '€' },
+  { code: 'CNY', symbol: '¥' },
+];
+
+const FX_MIN = 1;      // курс не может быть меньше рубля — защита от мусора
+const FX_MAX = 10000;  // и больше 10 000 ₽ за единицу — тоже
+
+function fxOk(v) {
+  return v != null && Number.isFinite(+v) && +v >= FX_MIN && +v <= FX_MAX;
+}
+
+/** Курс ЦБ (USD, EUR) + фиксинг юаня. Ключ — код валюты. */
+export async function fetchCurrencyRates() {
+  const [cbr, cnyHist] = await Promise.all([
+    iss('/statistics/engines/currency/markets/selt/rates.json').catch(() => null),
+    /* Две последние строки истории дают согласованную пару «сегодня/вчера»
+       для юаня. Двух недель с запасом хватает даже после долгих праздников. */
+    iss('/history/engines/currency/markets/index/securities/CNYFIXME.json', {
+      from: defaultFrom(14),
+    }).catch(() => null),
+  ]);
+
+  const out = {};
+  const row = cbr?.cbrf?.[0];
+  if (row) {
+    if (fxOk(row.CBRF_USD_LAST)) {
+      out.USD = {
+        code: 'USD', symbol: '$', source: 'cbr', sourceLabel: 'курс ЦБ',
+        value: +row.CBRF_USD_LAST,
+        changePct: row.CBRF_USD_LASTCHANGEPRCNT != null ? +row.CBRF_USD_LASTCHANGEPRCNT : null,
+        date: row.CBRF_USD_TRADEDATE || null,
+      };
+    }
+    if (fxOk(row.CBRF_EUR_LAST)) {
+      out.EUR = {
+        code: 'EUR', symbol: '€', source: 'cbr', sourceLabel: 'курс ЦБ',
+        value: +row.CBRF_EUR_LAST,
+        changePct: row.CBRF_EUR_LASTCHANGEPRCNT != null ? +row.CBRF_EUR_LASTCHANGEPRCNT : null,
+        date: row.CBRF_EUR_TRADEDATE || null,
+      };
+    }
+  }
+
+  const rows = (cnyHist?.history || []).filter(r => fxOk(r.CLOSE) && r.TRADEDATE);
+  if (rows.length) {
+    const last = rows[rows.length - 1];
+    const prev = rows.length > 1 ? rows[rows.length - 2] : null;
+    out.CNY = {
+      code: 'CNY', symbol: '¥', source: 'fixing', sourceLabel: 'фиксинг MOEX',
+      value: +last.CLOSE,
+      changePct: prev && +prev.CLOSE > 0 ? ((+last.CLOSE - +prev.CLOSE) / +prev.CLOSE) * 100 : null,
+      date: last.TRADEDATE,
+    };
+  }
+
+  return out;
+}
+
+/**
+ * Живой биржевой курс (CETS) — запасной источник, если курс ЦБ не пришёл.
+ *
+ * Здесь работает то же правило согласованной пары, что и у облигаций
+ * (normalize()): цена последней сделки идёт с изменением к закрытию
+ * прошлого дня (LAST + LASTTOPREVPRICE). Если сделок сегодня не было —
+ * берём цену предыдущего дня и НЕ показываем процент: у евро его просто
+ * не из чего посчитать, а ноль от биржи означает «данных нет», а не «ноль»
+ * («Грабли», п.1 и п.2).
+ */
+export async function fetchCurrencyMarket() {
+  const d = await iss('/engines/currency/markets/selt/boards/CETS/securities.json', {
+    'iss.only': 'securities,marketdata',
+  });
+  const S = new Map((d.securities || []).map(r => [r.SECID, r]));
+  const M = new Map((d.marketdata || []).map(r => [r.SECID, r]));
+
+  const MAP = [
+    { secid: 'USD000UTSTOM', code: 'USD', symbol: '$' },
+    { secid: 'EUR_RUB__TOM', code: 'EUR', symbol: '€' },
+    { secid: 'CNYRUB_TOM', code: 'CNY', symbol: '¥' },
+  ];
+
+  const out = {};
+  for (const { secid, code, symbol } of MAP) {
+    const s = S.get(secid);
+    const m = M.get(secid);
+    if (!s) continue;
+    const traded = m?.LAST != null && +m.LAST > 0;
+    const value = traded ? +m.LAST : (s.PREVPRICE != null && +s.PREVPRICE > 0 ? +s.PREVPRICE : null);
+    if (!fxOk(value)) continue;
+    out[code] = {
+      code, symbol, source: 'moex', sourceLabel: traded ? 'биржа' : 'биржа, прошлый день',
+      value,
+      changePct: (traded && m.LASTTOPREVPRICE != null && s.PREVPRICE != null)
+        ? +m.LASTTOPREVPRICE : null,
+      date: m?.SYSTIME ? String(m.SYSTIME).slice(0, 10) : null,
+    };
+  }
+  return out;
+}
+
+/** Валюта для полосы: сначала курс ЦБ, при неудаче — живая биржа. */
+export async function fetchTickerCurrencies() {
+  const cbr = await fetchCurrencyRates().catch(() => ({}));
+  const missing = TICKER_FX.filter(f => !cbr[f.code]);
+  if (!missing.length) return cbr;
+  const mkt = await fetchCurrencyMarket().catch(() => ({}));
+  const out = { ...cbr };
+  for (const f of missing) if (mkt[f.code]) out[f.code] = mkt[f.code];
+  return out;
+}
+
 /** Медиана набора чисел (для «ВДО (медиана)» и «надёжные корпораты»). */
 export function median(nums) {
   const a = nums.filter(v => Number.isFinite(v)).sort((x, y) => x - y);
