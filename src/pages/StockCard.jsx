@@ -201,7 +201,16 @@ export default function StockCard() {
           <Link className="btn btn-sm" to="/stocks">← Все акции</Link>
           <a className="btn btn-sm" href={`https://www.moex.com/ru/issue.aspx?code=${secid}`}
             target="_blank" rel="noopener noreferrer">Карточка на MOEX ↗</a>
-          <Link className="btn btn-sm" to="/screener">Скринер облигаций</Link>
+          {/* Здесь раньше стояла кнопка «Скринер облигаций» — просто ссылка
+              на /screener без единого параметра. Она ничего не находила и
+              только уводила со страницы. Вместо неё — переход с уже
+              подставленным эмитентом, то есть то, ради чего в скринер
+              вообще идут с карточки акции. */}
+          {issuerToken && (
+            <Link className="btn btn-sm" to={'/screener?q=' + encodeURIComponent(issuerToken)}>
+              Облигации «{issuerToken}» в скринере
+            </Link>
+          )}
         </div>
       </div>
 
@@ -267,18 +276,18 @@ export default function StockCard() {
       {/* ── Подсказка по соседним разделам ────────────────────────── */}
       <Panel title="Дальше" style={{ marginTop: 14 }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Link className="btn btn-sm" to="/issuers">Все эмитенты облигаций</Link>
           {issuerToken && (
             <Link className="btn btn-sm" to={'/screener?q=' + encodeURIComponent(issuerToken)}>
               Облигации «{issuerToken}» в скринере
             </Link>
           )}
-          <Link className="btn btn-sm" to="/issuers">Все эмитенты облигаций</Link>
         </div>
         <div className="c-3" style={{ fontSize: 11, marginTop: 10, lineHeight: 1.6 }}>
-          Кнопка открывает скринер с уже подставленным названием эмитента в поле поиска —
-          сравнивать выпуски по доходности, дюрации и цене удобнее там. Если в выдаче пусто,
-          значит облигаций этого эмитента на Московской бирже сейчас нет: биржа называет
-          выпуски иначе, чем акции, и поиск идёт по подстроке.
+          Ссылка на скринер открывает его с уже подставленным названием эмитента в поле
+          поиска — сравнивать выпуски по доходности, дюрации и цене удобнее там. Если в выдаче
+          пусто, значит облигаций этого эмитента на Московской бирже сейчас нет: биржа
+          называет выпуски иначе, чем акции, и поиск идёт по подстроке.
         </div>
       </Panel>
     </div>
