@@ -654,6 +654,92 @@ export async function fetchStockHistory(secid, { from, till } = {}) {
   })).filter(r => r.close != null);
 }
 
+/* ── паспорт бумаги: то, чего нет в списочных блоках ─────────────── *
+ *
+ * Разведано на живом ISS. Списочный блок TQCB отдаёт 47 полей, но в нём
+ * НЕТ ни имени эмитента, ни признака «для квалифицированных
+ * инвесторов». Эти сведения лежат только в описании КОНКРЕТНОЙ бумаги,
+ * по адресу /iss/securities/{SECID}.json. Проверено отдельно: пачкой
+ * этот блок не отдаётся — параметры securities= и iss.only=description
+ * на /iss/securities.json игнорируются, приходит обычный список из 100
+ * бумаг. Значит, обогащение стоит ровно один запрос на одну бумагу,
+ * и злоупотреблять им нельзя: 3 095 выпусков — это 3 095 запросов.
+ *
+ * Поэтому функция вызывается только там, где пользователь смотрит на
+ * один выпуск или на один эмитент, и никогда — ради списка целиком.
+ */
+export async function fetchSecurityDescription(secid) {
+  if (!secid) return null;
+  const d = await iss(`/securities/${secid}.json`);
+  const rows = (d.description || []).data || [];
+  const get = name => {
+    const r = rows.find(x => x[1] === name);
+    return r && r[2] != null && r[2] !== '' ? r[2] : null;
+  };
+  const full = get('Полное наименование');
+  return {
+    secid,
+    fullName: full,
+    /* «Сбербанк ПАО 001Р-SBER51» → «Сбербанк ПАО» */
+    issuerName: issuerFromFullName(full),
+    issuerCode: get('Код эмитента'),
+    issuersQualified: ['1', 'true', 'да'].includes(String(get('Бумаги для квалифицированных инвесторов') || '').toLowerCase()),
+    listLevel: get('Уровень листинга') != null ? +get('Уровень листинга') : null,
+    bondTypeText: get('Вид облигации'),
+    subtypeText: get('Подвид облигации'),
+    couponFreqYear: get('Периодичность выплаты купона в год') != null ? +get('Периодичность выплаты купона в год') : null,
+    issueVolume: get('Объем выпуска') != null ? +get('Объем выпуска') : null,
+    regNumber: get('Номер государственной регистрации'),
+    maturity: get('Дата погашения'),
+  };
+}
+
+/** Убирает из полного наименования хвост-серию: «… ПАО 001Р-SBER51» → «… ПАО». */
+export function issuerFromFullName(full) {
+  if (!full) return null;
+  const parts = String(full).trim().split(/\s+/);
+  // Срезаем с конца токены-серии: в них есть цифра и нет пробелов.
+  while (parts.length > 1) {
+    const last = parts[parts.length - 1];
+    if (/\d/.test(last) && last.length <= 24) parts.pop();
+    else break;
+  }
+  const name = parts.join(' ').trim();
+  return name || String(full).trim();
+}
+
+/**
+ * Обогащает выпуски одного эмитента паспортами.
+ * concurrency ограничена, чтобы не заваливать биржу; при превышении
+ * лимита функция честно сообщает, что покрытие неполное.
+ */
+export async function fetchIssuerProfile(bonds, { limit = 40, concurrency = 4 } = {}) {
+  const list = (bonds || []).filter(b => b.isin || b.secid);
+  if (!list.length) return { issuerName: null, byIsin: {}, covered: 0, total: 0, partial: false };
+
+  const total = list.length;
+  const slice = list.slice(0, limit);
+  const byIsin = {};
+  let issuerName = null;
+
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < slice.length) {
+      const b = slice[cursor++];
+      try {
+        const p = await fetchSecurityDescription(b.secid);
+        if (!p) continue;
+        byIsin[b.isin || b.secid] = p;
+        if (!issuerName && p.issuerName) issuerName = p.issuerName;
+      } catch { /* одна бумага не ответила — остальные всё равно нужны */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, slice.length) }, worker));
+
+  const covered = Object.keys(byIsin).length;
+  return { issuerName, byIsin, covered, total, partial: covered < total };
+}
+
 /* ── ставка ЦБ (история известных решений) ───────────────────────── */
 export const KEY_RATE_HISTORY = [
   ['2024-10-28', 21.0], ['2025-06-09', 20.0], ['2025-07-28', 18.0],

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, girboUrl, bondsOfIssuer, COUPON_LABEL, moexReportsUrl } from '../api/moex';
+import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, girboUrl, bondsOfIssuer, fetchIssuerProfile, COUPON_LABEL, moexReportsUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox } from '../components/ui';
 import { nf, money, dateShort } from '../lib/format';
 
@@ -17,6 +17,7 @@ export default function Issuer() {
   const [info, setInfo] = useState(null);
   const [emitter, setEmitter] = useState(null);
   const [girbo, setGirbo] = useState(null);
+  const [passport, setPassport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [kind, setKind] = useState('all'); // фильтр по типу купона
@@ -49,6 +50,22 @@ export default function Issuer() {
     fetchIssuerInfo(first.isin).then(r => { if (alive) setInfo(r); }).catch(() => {});
     return () => { alive = false; };
   }, [first?.isin]);
+
+  /* ── паспорта выпусков: имя эмитента и признак «для квалов» ───── *
+   * В списочном блоке биржи этих полей нет вовсе — они лежат только
+   * в описании конкретной бумаги, по одному запросу на выпуск.
+   * Поэтому берём первые 12 бумаг эмитента, а не весь список: у Сбера
+   * 359 выпусков, и 359 запросов ради одной колонки — это уже не
+   * вежливость, а наглость. Если покрытие неполное, так и напишем. */
+  useEffect(() => {
+    let alive = true;
+    setPassport(null);
+    if (!bonds.length) return;
+    fetchIssuerProfile(bonds, { limit: 12, concurrency: 4 })
+      .then(r => { if (alive) setPassport(r); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [bonds]);
 
   /* ── официальный реестр MOEX: ОГРН, адреса, сайт, капитализация ── */
   useEffect(() => {
@@ -140,8 +157,20 @@ export default function Issuer() {
     );
   }
 
-  const title = info?.title || info?.name || first.name || first.shortname;
-  const sub = info?.title ? (first.name || first.shortname) : null;
+  const title = info?.title || passport?.issuerName || first?.name || first?.shortname || key;
+  const sub = info?.title ? (first?.name || first?.shortname) : null;
+
+  /* Признак «только для квалифицированных инвесторов» биржа публикует
+     ПОШТУЧНО, в паспорте выпуска. Считаем по тем, что успели проверить. */
+  const qualStat = (() => {
+    if (!passport || !passport.covered) return null;
+    const list = Object.values(passport.byIsin);
+    return {
+      checked: list.length,
+      qualOnly: list.filter(p => p.issuersQualified).length,
+      complete: !passport.partial,
+    };
+  })();
 
   return (
     <div>
@@ -178,6 +207,12 @@ export default function Issuer() {
           : null}
         {summary.withYtm < summary.count
           ? <> По {summary.count - summary.withYtm} выпускам доходность не показана: биржа отдаёт недостоверное значение или сделок не было.</>
+          : null}
+        {qualStat
+          ? <> Допуск считаем по паспортам выпусков: проверено <b>{qualStat.checked}</b>
+            {qualStat.checked === 1 ? ' выпуск' : ' выпусков'}, из них только для квалифицированных
+            инвесторов — <b>{qualStat.qualOnly}</b>
+            {qualStat.complete ? '' : ' (у эмитента их больше, проверены не все)'}.</>
           : null}
       </div>
 
