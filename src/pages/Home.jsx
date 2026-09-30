@@ -21,8 +21,14 @@ import { nf, dateShort, chgStrA, chgClass, chgPill } from '../lib/format';
    двигается» до того, как читать таблицы. */
 const TICKER_INDEXES = [
   { secid: 'IMOEX', label: 'IMOEX' },
+  /* В бегущей строке у оригинала стоят ДРУГИЕ индексы, чем в блоках ниже:
+     «Корп» — это RUCBICP (CBICP, 92,21), а не RUCBCPNS (99,59), который
+     показан отдельным блоком «Индекс корпоративных облигаций». Сверено
+     выгрузкой всех 868 индексов Мосбиржи: RUCBICP = 92,21 и
+     RUCBHYCP = 68,10 совпали со строкой оригинала до копейки. */
   { secid: 'RGBI', label: 'RGBI' },
-  { secid: 'RUCBCPNS', label: 'Корп' },
+  { secid: 'RUCBICP', label: 'Корп' },
+  { secid: 'RUCBHYCP', label: 'ВДО' },
 ];
 
 function Ticker({ rates, stocks }) {
