@@ -1,12 +1,14 @@
-name: Разведка АКРА
+name: Разведка АКРА — часть 2
 
-# Разовый воркфлоу: проверяем, доступен ли сайт АКРА из сети GitHub Actions.
-# Из локальной сети он не отвечает вообще (падает на соединении), поэтому
-# единственный способ узнать правду — постучаться с другой сети.
+# Первая часть выяснила главное: АКРА не блокирует, связь есть (DNS 81.22.46.142),
+# а падает TLS — «unable to get local issuer certificate». Сервер отдаёт неполную
+# цепочку сертификатов. Браузеры дотягивают недостающий промежуточный сертификат
+# сами (AIA fetching), curl и Node этого не делают и обрывают соединение.
 #
-# Запускается сам при пуше этого файла. Отчёт кладётся в recon-acra.txt
-# в корне репозитория, чтобы его можно было прочитать без разбора логов.
-# После проверки и файл, и этот воркфлоу удаляются.
+# Здесь проверяем: если проверку сертификата ослабить, придёт ли настоящий контент
+# и есть ли на сайте список рейтингов. Это разведка, а не боевой код: ослаблять
+# проверку TLS в рабочем роботе нельзя, там нужен правильный промежуточный
+# сертификат через --cacert.
 
 on:
   workflow_dispatch:
@@ -23,49 +25,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Стучимся в АКРА
+      - name: Что именно не так с сертификатом
         run: |
           {
-            echo "Разведка АКРА из сети GitHub Actions"
-            echo "Дата: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-            echo "Адрес, с которого идём: определяется ниже"
+            echo "=== Цепочка сертификатов, как её отдаёт сервер"
+            echo | openssl s_client -connect acra-ratings.ru:443 -servername acra-ratings.ru 2>&1 \
+              | sed -n '1,40p'
             echo
-            echo "=== Внешний IP (для понимания, чья это сеть)"
-            curl -sS --max-time 15 https://api.ipify.org || echo "не удалось"
-            echo
-            echo
-            for url in \
-              "https://acra-ratings.ru/" \
-              "https://www.acra-ratings.ru/" \
-              "https://acra-ratings.ru/ratings/" \
-              "https://www.acra-ratings.ru/ratings/" \
-              "https://www.acra-ratings.ru/robots.txt" ; do
-              echo "=== $url"
-              code=$(curl -sS -o /tmp/body -w '%{http_code}' -L --max-time 30 \
-                -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' \
-                -H 'Accept-Language: ru-RU,ru;q=0.9' "$url" 2>/tmp/err || echo "000")
-              size=$(wc -c < /tmp/body 2>/dev/null || echo 0)
-              echo "HTTP $code | $size байт"
-              if [ -s /tmp/err ]; then echo "curl: $(head -c 300 /tmp/err)"; fi
-              if [ "$size" -gt 0 ]; then
-                echo "--- начало ответа ---"
-                head -c 400 /tmp/body
-                echo
-              fi
-              echo
-            done
-            echo "=== DNS"
-            getent hosts acra-ratings.ru || echo "acra-ratings.ru не разрешается"
-            echo
-            echo "=== Для сравнения: контрольный сайт, который заведомо открыт"
-            curl -sS -o /dev/null -w 'raexpert.ru -> HTTP %{http_code}\n' --max-time 20 https://raexpert.ru/ || echo "raexpert недоступен"
-          } > recon-acra.txt 2>&1
-          cat recon-acra.txt
+            echo "=== Сколько сертификатов в цепочке"
+            echo | openssl s_client -connect acra-ratings.ru:443 -servername acra-ratings.ru -showcerts 2>/dev/null \
+              | grep -c 'BEGIN CERTIFICATE' || true
+          } > recon-acra2.txt 2>&1
 
-      - name: Сохранить отчёт в репозиторий
+      - name: Контент при ослабленной проверке
+        run: |
+          {
+            echo
+            echo "=== Содержимое страниц (curl -k, проверка сертификата отключена)"
+            for url in \
+              "https://www.acra-ratings.ru/" \
+              "https://www.acra-ratings.ru/ratings/" \
+              "https://www.acra-ratings.ru/ratings/companies/" \
+              "https://www.acra-ratings.ru/ratings/banks/" ; do
+              echo
+              echo "--- $url"
+              code=$(curl -ksS -o /tmp/b -w '%{http_code}' -L --max-time 30 \
+                -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' \
+                -H 'Accept-Language: ru-RU,ru;q=0.9' "$url" 2>/tmp/e || echo 000)
+              size=$(wc -c < /tmp/b 2>/dev/null || echo 0)
+              echo "HTTP $code | $size байт"
+              [ -s /tmp/e ] && echo "curl: $(head -c 200 /tmp/e)"
+              if [ "$size" -gt 500 ]; then
+                echo "title: $(grep -o '<title[^>]*>[^<]*' /tmp/b | head -1 | sed 's/<title[^>]*>//')"
+                echo "обозначений рейтинга AAA/AA/A/BBB(RU): $(grep -oE '(AAA|AA\+|AA-|AA|A\+|A-|A|BBB\+|BBB-|BBB)\(RU\)' /tmp/b | wc -l)"
+                echo "строк таблиц <tr>: $(grep -c '<tr' /tmp/b)"
+                echo "--- фрагмент ---"
+                sed 's/<[^>]*>/ /g' /tmp/b | tr -s ' \n' ' \n' | grep -v '^ *$' | head -25
+              fi
+            done
+          } >> recon-acra2.txt 2>&1
+          cat recon-acra2.txt
+
+      - name: Сохранить отчёт
         run: |
           git config user.name "recon"
           git config user.email "recon@local"
-          git add recon-acra.txt
-          git commit -m "Разведка АКРА из сети Actions" || echo "нечего коммитить"
+          git add recon-acra2.txt
+          git commit -m "Разведка АКРА, часть 2: сертификат и контент" || echo "нечего коммитить"
           git push
