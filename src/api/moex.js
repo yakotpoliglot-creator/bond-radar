@@ -13,10 +13,15 @@ const BOND_BOARDS = ['TQCB', 'TQOB'];
 const SHARES_URL = `${ISS}/engines/stock/markets/shares/boards/TQBR/securities.json`;
 
 /* ── низкоуровневый запрос ───────────────────────────────────────── */
-async function iss(path, params = {}, { retries = 3 } = {}) {
+/* extended=true → ответ вида [charsetinfo, {block:[...]}] и мы отдаём второй
+   элемент. Но осторожно: у /iss/securities/{SECID}.json в extended-режиме
+   блок description приходит ПУСТЫМ (0 строк) — проверено на живом ISS, там
+   40 полей против нуля. Поэтому паспорт бумаги запрашиваем с extended:false
+   и работаем с обычным объектом блоков. */
+async function iss(path, params = {}, { retries = 3, extended = true } = {}) {
   const url = new URL(ISS + path);
   url.searchParams.set('iss.meta', 'off');
-  url.searchParams.set('iss.json', 'extended');
+  if (extended) url.searchParams.set('iss.json', 'extended');
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null) url.searchParams.set(k, v);
   }
@@ -28,7 +33,7 @@ async function iss(path, params = {}, { retries = 3 } = {}) {
       if (text.trimStart().startsWith('<')) throw new Error('ISS вернул HTML');
       const arr = JSON.parse(text);
       // iss.json=extended → [charsetinfo, {block: [...], ...}]
-      return Array.isArray(arr) && arr.length > 1 ? arr[1] : arr;
+      return extended && Array.isArray(arr) && arr.length > 1 ? arr[1] : arr;
     } catch (e) {
       if (attempt === retries) throw e;
       await new Promise(res => setTimeout(res, 400 * attempt));
@@ -670,7 +675,7 @@ export async function fetchStockHistory(secid, { from, till } = {}) {
  */
 export async function fetchSecurityDescription(secid) {
   if (!secid) return null;
-  const d = await iss(`/securities/${secid}.json`);
+  const d = await iss(`/securities/${secid}.json`, {}, { extended: false });
   const rows = (d.description || []).data || [];
   const get = name => {
     const r = rows.find(x => x[1] === name);
