@@ -158,6 +158,29 @@ export default function Issuer() {
         </div>
       </div>
 
+      {/* ── Вводный абзац ─────────────────────────────────────────────
+          Всё в нём — арифметика по уже загруженному списку выпусков.
+          Ни одного оценочного утверждения о надёжности эмитента здесь
+          нет: для этого нужны кредитные рейтинги, а биржа их не отдаёт. */}
+      <div className="lead">
+        <b>{title}</b> — {summary.count}{' '}
+        {summary.count === 1 ? 'выпуск' : summary.count < 5 ? 'выпуска' : 'выпусков'} в обращении
+        {summary.yearFrom && summary.yearTill
+          ? <> с погашением с <b>{summary.yearFrom}</b> по <b>{summary.yearTill}</b> год</>
+          : null}
+        {summary.fix > 0 || summary.float > 0 ? <>: {summary.fix > 0 ? <><b>{summary.fix}</b> с фиксированным купоном</> : null}
+          {summary.fix > 0 && summary.float > 0 ? ', ' : ''}
+          {summary.float > 0 ? <><b>{summary.float}</b> с плавающим</> : null}</> : null}
+        {summary.amort > 0 ? <>, <b>{summary.amort}</b> с амортизацией номинала</> : null}
+        {summary.offer > 0 ? <>, <b>{summary.offer}</b> с офертой</> : null}.
+        {summary.avgYtm != null
+          ? <> Средняя доходность к погашению по {summary.withYtm} выпускам, где биржа её отдаёт, — <b>{nf(summary.avgYtm, 2)}%</b>.</>
+          : null}
+        {summary.withYtm < summary.count
+          ? <> По {summary.count - summary.withYtm} выпускам доходность не показана: биржа отдаёт недостоверное значение или сделок не было.</>
+          : null}
+      </div>
+
       {/* ── Сводка ────────────────────────────────────────────────── */}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 14 }}>
         <Kpi label="Выпусков" value={nf(summary.count, 0)} sub={`показано ${filtered.length}`} />
@@ -236,9 +259,13 @@ export default function Issuer() {
       </div>
 
       {/* ── Все выпуски эмитента (сортировка по погашению) ────────── */}
-      <Panel title="Выпуски эмитента" pad={false}
+      <Panel title="Выпуски в обращении" pad={false}
         right={<span className="c-3" style={{ fontSize: 11 }}>сортировка по умолчанию — погашение</span>}>
-        <BondTable bonds={filtered} initialSort="mat" />
+        <BondTable
+          bonds={filtered}
+          initialSort="mat"
+          cols={['name', 'kind', 'ytm', 'coupon', 'price', 'currentYield', 'offer', 'mat', 'level', 'turnover']}
+        />
       </Panel>
 
       {/* ── Официальные данные эмитента (реестр MOEX) ─────────────── */}

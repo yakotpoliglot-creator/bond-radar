@@ -429,6 +429,23 @@ table.tbl tbody tr { cursor: pointer; }
 }
 .legend-n { flex: 1 1 240px; min-width: 200px; }
 
+/* Вводный абзац страницы эмитента: читается как текст, а не как KPI. */
+.lead {
+  margin: 0 0 14px;
+  padding: 11px 14px;
+  background: var(--bg2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text2);
+}
+.lead b {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ═══════════════════════ Прочее ═══════════════════════ */
 .page-h { margin-bottom: 16px; }
 .page-t { font-size: 21px; font-weight: 700; }
