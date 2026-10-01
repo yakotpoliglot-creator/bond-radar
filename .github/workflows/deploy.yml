@@ -3,6 +3,15 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [master]
+  # Коммит, сделанный внутри Actions обычным GITHUB_TOKEN, НЕ порождает
+  # событие push — так GitHub защищается от рекурсии. Значит, роботы
+  # (отчётность ГИР БО и первичка) своими коммитами выкладку не
+  # запускают, и свежие данные на сайт сами не попадают. Поэтому
+  # выкладываем сайт ещё и по завершении каждого робота: тогда данные
+  # обновляются без чьего-либо участия.
+  workflow_run:
+    workflows: ["Отчётность ГИР БО", "Первичные размещения"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +25,9 @@ concurrency:
 
 jobs:
   build-and-deploy:
+    # По push и в ручном запуске — всегда; по завершении робота — только
+    # если робот отработал успешно (иначе он ничего и не закоммитил).
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
