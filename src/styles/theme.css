@@ -515,6 +515,72 @@ html[data-theme="dark"] .tk-item { border-right-color: #2b2f28; }
   .mm-svg { cursor: default; }
 }
 
+/* ═══════════════════ Первичные размещения ═══════════════════
+   Страница /placements: карточки анонсов размещений, собранных роботом
+   из сообщений биржи. Вкладки и фильтры — те же .chip, что и везде. */
+.pl-controls { padding: 11px 13px; display: grid; gap: 10px; }
+.pl-tabs { display: flex; gap: 7px; flex-wrap: wrap; }
+.pl-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 9px 14px;
+  border-top: 1px solid var(--border); padding-top: 10px;
+}
+.pl-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.pl-sel {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text3); font-weight: 600;
+}
+.pl-sel select {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  border-radius: 7px; padding: 4px 6px; font-size: 11.5px; font-family: inherit;
+}
+.pl-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+}
+.pl-card {
+  display: flex; flex-direction: column; gap: 9px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 11px; padding: 13px 14px;
+}
+.pl-card:hover { border-color: var(--border2); }
+.pl-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.pl-issuer {
+  font-size: 13px; font-weight: 700; line-height: 1.35;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.pl-src {
+  flex: 0 0 auto; font-size: 10.5px; font-weight: 600; color: var(--text3);
+  text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px;
+}
+.pl-src:hover { color: var(--text); border-color: var(--border2); }
+.pl-badges { display: flex; gap: 5px; flex-wrap: wrap; }
+.pl-badges .tag { font-size: 10px; }
+.pl-status { font-size: 11.5px; color: var(--text2); font-weight: 600; }
+.pl-status.tag { align-self: flex-start; }
+.pl-rows {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px;
+  border-top: 1px solid var(--border); padding-top: 9px;
+}
+.pl-rows > div {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  font-size: 11.5px; min-width: 0;
+}
+.pl-rows span { color: var(--text3); white-space: nowrap; }
+.pl-rows b {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-weight: 600; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pl-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: auto; padding-top: 9px; border-top: 1px solid var(--border);
+}
+.pl-foot .mono { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 720px) {
+  .pl-grid { grid-template-columns: 1fr; }
+  .pl-rows { grid-template-columns: 1fr; }
+}
+
 /* ═══════════════════ Пояснения списком ═══════════════════
    Блок «на что смотреть» на странице эмитента: короткие фразы
    с выделенными числами. Маркер свой, чтобы не зависеть от

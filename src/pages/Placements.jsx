@@ -1,57 +1,269 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchPlacementNews } from '../api/moex';
-import { Panel, Loading, ErrorBox, Kpi } from '../components/ui';
+import { fetchPlacements, couponKind, COUPON_LABEL, COUPON_TAG } from '../api/moex';
+import { Panel, Loading, ErrorBox, Kpi, timesWord } from '../components/ui';
 
 /* ═══════════════════════════════════════════════════════════════════
    Первичные размещения — /placements.
 
-   ЧЕСТНО О ТОМ, ЧТО ЗДЕСЬ ЕСТЬ И ЧЕГО НЕТ:
-   MOEX не публикует в открытом API ни книгу заявок, ни ориентир купона,
-   ни дату размещения выпуска. Единственный машиночитаемый источник —
-   новостная лента биржи, где появляются анонсы «О порядке сбора заявок
-   и заключения сделок при размещении облигаций серии …».
+   Данные собирает робот (scripts/placements.mjs) из сообщений
+   Московской биржи и кладёт в placements.json рядом с сайтом. Здесь
+   только показ: список разобранных анонсов, фильтры и карточки.
 
-   Поэтому это ЛЕНТА АНОНСОВ, а не база размещений. Купонов и объёмов
-   здесь нет и выдумывать их мы не будем.
+   ЧЕСТНО О ТОМ, ЧТО ЗДЕСЬ ЕСТЬ И ЧЕГО НЕТ.
+
+   Есть: эмитент, серия, регистрационный номер, ISIN, дата начала
+   размещения, период сбора заявок с точным временем, режим и цена
+   размещения, андеррайтер. По уже размещённым выпускам — фактический
+   объём, количество бумаг, цена и доля размещённых.
+
+   Нет и не будет выдумано:
+     · рейтинги — у источника нет ни агентства, ни даты присвоения;
+     · ориентир купона ДО размещения — ставку раскрывает эмитент, а не
+       биржа, в сообщениях биржи её нет;
+     · книга заявок — биржа её не публикует.
+
+   Купон, тип купона и дата погашения подтягиваются из торговых данных
+   биржи по ISIN или регистрационному номеру — но только после того,
+   как бумага появилась в списках. До размещения там прочерки.
    ═══════════════════════════════════════════════════════════════════ */
 
-/** «2026-09-29 18:45:00» → «29.09.2026, 18:45» */
-function fmtDateTime(s) {
-  if (!s) return '—';
-  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T]?(\d{2}:\d{2})?/);
-  if (!m) return String(s);
-  const [, y, mo, d, t] = m;
-  return `${d}.${mo}.${y}${t ? ', ' + t : ''}`;
+const DAY = 864e5;
+
+/* ── форматирование ──────────────────────────────────────────────── */
+
+/** «2026-10-05» → «05.10.2026» */
+function fmtDate(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : '—';
 }
 
-/** «Акционерное общество "Сбербанк…"» — укорачиваем до сути. */
-function shortenIssuer(title) {
-  return String(title)
+/** «2028-03-01» → «03.2028» — как в карточках выпусков. */
+function fmtMonth(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})/);
+  return m ? `${m[2]}.${m[1]}` : '—';
+}
+
+/** Деньги коротко: 9 901 480 000 → «9,9 млрд ₽» */
+function fmtMoney(v, cur = '₽') {
+  if (v == null || !Number.isFinite(Number(v))) return '—';
+  const n = Number(v);
+  const s = n >= 1e12 ? `${(n / 1e12).toFixed(2).replace('.', ',')} трлн`
+    : n >= 1e9 ? `${(n / 1e9).toFixed(2).replace('.', ',')} млрд`
+      : n >= 1e6 ? `${(n / 1e6).toFixed(1).replace('.', ',')} млн`
+        : n >= 1e3 ? `${Math.round(n / 1e3)} тыс.`
+          : String(n);
+  return `${s} ${cur}`;
+}
+
+/** Процент с запятой: 13.89 → «13,89 %» */
+function fmtPct(v, digits = 2) {
+  if (v == null || !Number.isFinite(Number(v))) return '—';
+  return `${Number(v).toFixed(digits).replace('.', ',')} %`;
+}
+
+/** Сколько дней между двумя датами (по календарю, без времени). */
+function daysBetween(fromIso, toIso) {
+  const a = Date.parse(`${fromIso}T00:00:00Z`);
+  const b = Date.parse(`${toIso}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.round((b - a) / DAY);
+}
+
+/** Сегодняшняя дата в виде «2026-10-01» по местному календарю. */
+function todayIso(now = new Date()) {
+  const p = n => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}
+
+/** «Акционерное общество "Сбербанк КИБ"» → «АО "Сбербанк КИБ"» */
+function shortIssuer(name) {
+  return String(name || '')
     .replace(/Публичное акционерное общество\s*/gi, 'ПАО ')
     .replace(/Акционерное общество\s*/gi, 'АО ')
     .replace(/Общество с ограниченной ответственностью\s*/gi, 'ООО ')
+    .replace(/\s+\)/g, ')')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-/** Серия выпуска из заголовка анонса, если её удаётся выделить. */
-function seriesOf(title) {
-  const m = String(title).match(/серии\s+([A-Za-zА-Яа-я0-9_\-]+)/);
+/** «биржевые облигации процентные неконвертируемые … серии 001Р-05» → «001Р-05» */
+function seriesOf(item) {
+  const src = `${item.series || ''} ${item.title || ''}`;
+  const m = src.match(/серии\s+([A-Za-zА-Яа-я0-9_\-/]+)/i);
   return m ? m[1] : null;
 }
 
+/** Купон: «23,50 %», «Ключевая ставка» или честное «по формуле».
+
+    У структурных выпусков (СберИОС и подобных) биржа отдаёт в поле
+    купона 0,01 % — это не ставка, а заглушка: доход зависит от
+    базового актива. Печатать «0,01 %» рядом с такой бумагой значит
+    вводить читателя в заблуждение, поэтому пишем прямо. */
+function couponText(bond, kind) {
+  if (!bond) return '—';
+  if (kind === 'struct') return 'по формуле';
+  if (bond.couponPercent != null) return fmtPct(bond.couponPercent);
+  if (bond.couponDetails && /ставка|%/i.test(bond.couponDetails)) return bond.couponDetails;
+  return '—';
+}
+
+/* ── статус размещения ───────────────────────────────────────────── */
+
+/**
+ * Что происходит с выпуском прямо сейчас. Считаем по расписанию из
+ * анонса биржи: период предварительного сбора заявок, а если его нет —
+ * по дате размещения.
+ */
+function statusOf(item, now = new Date()) {
+  const today = todayIso(now);
+  const book = item.book || null;
+
+  if (item.kind === 'suspend') return { text: 'торги приостановлены', cls: 'r' };
+
+  if (item.kind === 'results') {
+    const share = item.sharePlaced != null ? ` · размещено ${fmtPct(item.sharePlaced, 1)}` : '';
+    return { text: `итоги подведены${share}`, cls: 'g' };
+  }
+
+  if (book && book.from && book.to) {
+    if (today < book.from) {
+      const d = daysBetween(today, book.from);
+      return { text: `сбор заявок с ${fmtDate(book.from)} · через ${d} ${timesWord(d).split(' ')[1]}`, cls: 'b' };
+    }
+    if (today > book.to) return { text: `сбор заявок закрыт ${fmtDate(book.to)}`, cls: '' };
+    return {
+      text: `сбор заявок идёт до ${fmtDate(book.to)}${book.daily ? ` · ежедневно ${book.daily}` : ''}`,
+      cls: 'a', live: true,
+    };
+  }
+
+  if (item.placementStart) {
+    const d = daysBetween(today, item.placementStart);
+    if (d > 0) return { text: `размещение ${fmtDate(item.placementStart)} · через ${d} ${timesWord(d).split(' ')[1]}`, cls: 'b' };
+    if (d === 0) return { text: 'размещение сегодня', cls: 'a', live: true };
+    return { text: `размещение прошло ${fmtDate(item.placementStart)}`, cls: '' };
+  }
+
+  return { text: 'дата размещения не объявлена', cls: '' };
+}
+
+/* ── фильтры ─────────────────────────────────────────────────────── */
+
+const CHIPS = [
+  { id: 'all', label: 'Все' },
+  { id: 'fix', label: 'Фиксированный' },
+  { id: 'float', label: 'Флоатер' },
+  { id: 'qual', label: 'Только для квалов' },
+  { id: 'unqual', label: 'Без квала' },
+];
+
+const COUPON_STEPS = [
+  { id: 'any', label: 'любой', min: null },
+  { id: '16', label: 'от 16 %', min: 16 },
+  { id: '18', label: 'от 18 %', min: 18 },
+  { id: '20', label: 'от 20 %', min: 20 },
+  { id: '22', label: 'от 22 %', min: 22 },
+];
+
+const TERM_STEPS = [
+  { id: 'any', label: 'любой', min: 0, max: 100 },
+  { id: 'y1', label: 'до 1 года', min: 0, max: 1 },
+  { id: 'y3', label: '1–3 года', min: 1, max: 3 },
+  { id: 'y5', label: '3–5 лет', min: 3, max: 5 },
+  { id: 'y10', label: '5–10 лет', min: 5, max: 10 },
+  { id: 'y10p', label: 'больше 10 лет', min: 10, max: 100 },
+];
+
+/** Срок до погашения в годах — по дате погашения из торговых данных. */
+function termYears(item, today) {
+  const mat = item.bond?.matDate || item.bond?.offerDate;
+  if (!mat) return null;
+  const d = daysBetween(today, String(mat).slice(0, 10));
+  return d == null ? null : d / 365.25;
+}
+
+/* ── карточка ────────────────────────────────────────────────────── */
+
+function PlacementCard({ item, kind, today }) {
+  const bond = item.bond || null;
+  const status = statusOf(item, new Date());
+  const ck = bond ? couponKind({ COUPON_DETAILS: bond.couponDetails, BONDTYPE: bond.bondType }) : null;
+  const series = seriesOf(item);
+  const term = termYears(item, today);
+  const linkId = bond?.secid || item.isin;
+
+  return (
+    <div className="pl-card">
+      <div className="pl-top">
+        <div className="pl-issuer" title={item.issuer || item.series || ''}>
+          {shortIssuer(item.issuer) || 'Эмитент не указан'}
+        </div>
+        {item.url && (
+          <a className="pl-src" href={item.url} target="_blank" rel="noopener noreferrer"
+            title="Сообщение Московской биржи — первоисточник">MOEX ↗</a>
+        )}
+      </div>
+
+      <div className="pl-badges">
+        {ck && <span className={'tag ' + (COUPON_TAG[ck] || '')}>{COUPON_LABEL[ck]}</span>}
+        {bond?.qualified === true && <span className="tag a">только для квалов</span>}
+        {bond?.qualified === false && <span className="tag">без квала</span>}
+        {bond?.traded === false && <span className="tag b">ещё не торгуется</span>}
+        {series && <span className="tag">{series}</span>}
+      </div>
+
+      <div className={'pl-status ' + (status.cls ? 'tag ' + status.cls : '')}>{status.text}</div>
+
+      <div className="pl-rows">
+        <div><span>Купон</span><b title={bond?.couponDetails || ''}>{couponText(bond, ck)}</b></div>
+        {kind === 'results' ? (
+          <>
+            <div><span>Размещено</span><b>{fmtMoney(item.volumePlaced, bond?.currency === 'SUR' || !bond?.currency ? '₽' : bond.currency)}</b></div>
+            <div><span>Доля выпуска</span><b>{item.sharePlaced != null ? fmtPct(item.sharePlaced, 1) : '—'}</b></div>
+            <div><span>Цена</span><b>{item.actualPrice != null ? `${item.actualPrice.toLocaleString('ru-RU')} ₽` : '—'}</b></div>
+            <div><span>Размещение</span><b>{fmtDate(item.placementStart)}{item.placementEnd && item.placementEnd !== item.placementStart ? ` – ${fmtDate(item.placementEnd)}` : ''}</b></div>
+          </>
+        ) : (
+          <>
+            <div><span>Дата размещения</span><b>{fmtDate(item.placementStart)}</b></div>
+            <div><span>Цена</span><b>{item.priceRub != null ? `${item.priceRub.toLocaleString('ru-RU')} ₽` : '—'}{item.pricePercent != null ? ` (${item.pricePercent} %)` : ''}</b></div>
+            <div><span>Сбор заявок</span><b>{item.book?.from ? `${fmtDate(item.book.from)} – ${fmtDate(item.book.to)}` : (item.collectTime || '—')}</b></div>
+            <div><span>Погашение</span><b>{bond?.matDate ? fmtMonth(bond.matDate) : '—'}{term != null ? ` · ${term.toFixed(1).replace('.', ',')} г.` : ''}</b></div>
+          </>
+        )}
+      </div>
+
+      <div className="pl-foot">
+        <span className="c-3 mono">{item.regNumber || item.isin || '—'}</span>
+        {linkId ? (
+          <Link className="btn btn-sm" to={`/bond/${linkId}`}>Подробнее →</Link>
+        ) : (
+          <span className="c-3" style={{ fontSize: 11 }}>бумаги ещё нет в торговых списках</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── страница ────────────────────────────────────────────────────── */
+
 export default function Placements() {
-  const [rows, setRows] = useState([]);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [fetchedAt, setFetchedAt] = useState(null);
+  const [tab, setTab] = useState('future');
+  const [chip, setChip] = useState('all');
+  const [coupon, setCoupon] = useState('any');
+  const [term, setTerm] = useState('any');
+  const [, setTick] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      setRows(await fetchPlacementNews());
-      setFetchedAt(new Date());
+      const d = await fetchPlacements();
+      if (!d) throw new Error('Файл placements.json не найден');
+      setData(d);
       setLoading(false);
     } catch (e) {
       setError(e); setLoading(false);
@@ -60,116 +272,178 @@ export default function Placements() {
 
   useEffect(() => { load(); }, [load]);
 
-  /* Лента биржи обновляется в течение дня, а страница может висеть
-     открытой. Перечитываем раз в 10 минут — этого хватает: анонсы
-     сбора заявок появляются не чаще, чем раз в несколько часов.
-     При скрытой вкладке не дёргаем биржу впустую. */
+  /* Раз в минуту пересчитываем статусы: «сбор заявок идёт» и счётчики
+     дней должны обновляться у открытой страницы. При скрытой вкладке
+     не тикаем — незачем. */
   useEffect(() => {
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible') load();
-    }, 10 * 60 * 1000);
+      if (document.visibilityState === 'visible') setTick(t => t + 1);
+    }, 60000);
     return () => clearInterval(id);
-  }, [load]);
+  }, []);
 
-  if (loading) return <Loading text="Загрузка анонсов размещений с Московской биржи…" />;
+  const items = data?.items || [];
+  const today = todayIso();
+
+  const groups = useMemo(() => {
+    const future = [];
+    const pending = [];
+    const past = [];
+    const paused = [];
+    const today0 = todayIso();
+    /* Дата, по которой судим «впереди или уже прошло»: конец сбора
+       заявок, а если его в анонсе нет — дата размещения. */
+    const when = x => x.book?.to || x.placementStart || null;
+
+    for (const x of items) {
+      if (x.kind === 'results') past.push(x);
+      else if (x.kind === 'suspend') paused.push(x);
+      else if ((when(x) || '9999-99-99') >= today0) future.push(x);
+      else pending.push(x);
+    }
+
+    /* Впереди — от ближайших к дальним. Ждут итогов и итоги — от свежих
+       к старым: читателю важнее то, что произошло только что. */
+    future.sort((a, b) => String(when(a)).localeCompare(String(when(b))));
+    const desc = (a, b) => String(when(b) || b.publishedAt).localeCompare(String(when(a) || a.publishedAt));
+    pending.sort(desc);
+    past.sort(desc);
+    paused.sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)));
+    return { future, pending, past, paused };
+  }, [items]);
+
+  const rows = useMemo(() => {
+    const src = groups[tab] || [];
+    const step = COUPON_STEPS.find(s => s.id === coupon);
+    const termStep = TERM_STEPS.find(s => s.id === term);
+    return src.filter(x => {
+      const ck = x.bond ? couponKind({ COUPON_DETAILS: x.bond.couponDetails, BONDTYPE: x.bond.bondType }) : null;
+      if (chip === 'fix' && ck !== 'fix') return false;
+      if (chip === 'float' && ck !== 'float') return false;
+      if (chip === 'qual' && x.bond?.qualified !== true) return false;
+      if (chip === 'unqual' && x.bond?.qualified !== false) return false;
+      if (step?.min != null && !(x.bond?.couponPercent >= step.min)) return false;
+      if (termStep && termStep.id !== 'any') {
+        const y = termYears(x, today);
+        if (y == null || y < termStep.min || y >= termStep.max) return false;
+      }
+      return true;
+    });
+  }, [tab, groups, chip, coupon, term, today]);
+
+  if (loading) return <Loading text="Читаем первичные размещения Московской биржи…" />;
   if (error) return <ErrorBox error={error} onRetry={load} />;
 
-  const latest = rows[0]?.publishedAt || null;
-  const oldest = rows[rows.length - 1]?.publishedAt || null;
+  const nearest = groups.future[0];
+  const placedSum = groups.past.reduce((s, x) => s + (x.volumePlaced || 0), 0);
 
   return (
     <div>
       <div className="page-h">
-        <div className="page-t">◈ Первичные размещения</div>
+        <div className="page-t">◈ Первичка</div>
         <div className="page-s">
-          Анонсы сбора заявок с новостной ленты Московской биржи
+          Размещения облигаций по сообщениям Московской биржи: даты, сбор заявок, цена, итоги
         </div>
         <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn btn-sm" onClick={load}>↻ Обновить</button>
           <Link className="btn btn-sm" to="/screener">Скринер облигаций</Link>
-          {fetchedAt && (
+          {data?.generatedAt && (
             <span className="c-3" style={{ fontSize: 11 }}>
-              получено с биржи в {String(fetchedAt.getHours()).padStart(2, '0')}:
-              {String(fetchedAt.getMinutes()).padStart(2, '0')} · обновляется само раз в 10 минут
+              собрано {fmtDate(data.generatedAt)} в {String(data.generatedAt).slice(11, 16)} ·
+              обновляется роботом раз в 3 часа
             </span>
           )}
         </div>
       </div>
 
-      {/* ── Что здесь есть, а чего нет ────────────────────────────── */}
-      <Panel style={{ marginBottom: 14 }}>
-        <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
-          Это <b>лента анонсов</b>, а не база первичных размещений. Московская биржа не отдаёт
-          в открытом API ни <b>книгу заявок</b>, ни <b>ориентир купона</b>, ни <b>дату размещения</b> выпуска —
-          единственное, что публикуется машиночитаемо, это новостные сообщения вида
-          «О порядке сбора заявок и заключения сделок при размещении облигаций серии …».
-          {' '}Мы показываем ровно их. Купонов, объёмов и цен здесь нет — они появятся
-          в карточке выпуска после начала торгов.
+      {/* ── Сводка ────────────────────────────────────────────────── */}
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(165px, 1fr))', marginBottom: 14 }}>
+        <Kpi label="Впереди размещений" value={groups.future.length}
+          sub={nearest ? `ближайшее ${fmtDate(nearest.book?.to || nearest.placementStart)}` : 'в окне анонсов нет'} />
+        <Kpi label="Размещено за окно" value={fmtMoney(placedSum)} sub={`${groups.past.length} выпусков, фактические объёмы`} />
+        <Kpi label="Сбор заявок идёт" value={items.filter(x => statusOf(x).live).length} sub="по расписанию из анонсов" />
+        <Kpi label="Ждут итогов" value={groups.pending.length} sub="объявлены, итогов ещё нет" />
+      </div>
+
+      {/* ── Вкладки и фильтры ─────────────────────────────────────── */}
+      <Panel pad={false} style={{ marginBottom: 14 }}>
+        <div className="pl-controls">
+          <div className="pl-tabs">
+            <button className={'chip' + (tab === 'future' ? ' on' : '')} onClick={() => setTab('future')}>
+              Впереди · {groups.future.length}
+            </button>
+            <button className={'chip' + (tab === 'pending' ? ' on' : '')} onClick={() => setTab('pending')}>
+              Ждут итогов · {groups.pending.length}
+            </button>
+            <button className={'chip' + (tab === 'past' ? ' on' : '')} onClick={() => setTab('past')}>
+              Итоги · {groups.past.length}
+            </button>
+            <button className={'chip' + (tab === 'paused' ? ' on' : '')} onClick={() => setTab('paused')}>
+              Приостановки · {groups.paused.length}
+            </button>
+          </div>
+
+          <div className="pl-filters">
+            <div className="pl-chips">
+              {CHIPS.map(c => (
+                <button key={c.id} className={'chip' + (chip === c.id ? ' on' : '')} onClick={() => setChip(c.id)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <label className="pl-sel">Купон:
+              <select value={coupon} onChange={e => setCoupon(e.target.value)}>
+                {COUPON_STEPS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </label>
+            <label className="pl-sel">Срок:
+              <select value={term} onChange={e => setTerm(e.target.value)}>
+                {TERM_STEPS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </label>
+            <span className="c-3" style={{ fontSize: 11 }}>найдено {rows.length}</span>
+          </div>
         </div>
       </Panel>
 
-      {/* ── Сводка ────────────────────────────────────────────────── */}
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 14 }}>
-        <Kpi label="Анонсов в ленте" value={rows.length} sub="все размещения, не только облигации" />
-        <Kpi label="Свежий анонс" value={latest ? fmtDateTime(latest) : '—'} sub="последнее сообщение ленты" />
-        <Kpi label="Лента с" value={oldest ? fmtDateTime(oldest) : '—'} sub="биржа хранит короткий период" />
-      </div>
-
-      {/* ── Список анонсов ────────────────────────────────────────── */}
+      {/* ── Карточки ──────────────────────────────────────────────── */}
       {rows.length === 0 ? (
-        <Panel title="Анонсы размещений">
+        <Panel>
           <div className="empty">
-            В текущей ленте новостей Московской биржи анонсов размещений нет.
-            Лента короткая, поэтому в спокойные дни здесь может быть пусто — это не ошибка.
+            В этом окне таких размещений нет. Робот собирает анонсы за последние {data?.window?.days || 45} дней
+            и обновляет файл раз в три часа — в спокойные дни список короткий, это не ошибка.
           </div>
         </Panel>
       ) : (
-        <Panel title="Анонсы размещений" pad={false}
-          right={<span className="c-3" style={{ fontSize: 11 }}>{rows.length} шт. · источник — новости MOEX</span>}>
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th style={{ width: 140 }}>ДАТА</th>
-                  <th style={{ width: 150 }}>СЕРИЯ</th>
-                  <th>АНОНС</th>
-                  <th style={{ width: 70 }}>ИСТОЧНИК</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(n => {
-                  const series = seriesOf(n.title);
-                  /* Текст анонса без служебной шапки и без серии —
-                     серия уже вынесена в отдельную колонку. */
-                  const body = shortenIssuer(
-                    n.title
-                      .replace(/^О порядке сбора заявок и заключения сделок при размещении облигаций\s*/i, '')
-                      .replace(/серии\s+[A-Za-zА-Яа-я0-9_\-]+/i, '')
-                      .replace(/\s+/g, ' ')
-                      .trim(),
-                  );
-                  return (
-                    <tr key={n.id}>
-                      <td className="mono c-2" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(n.publishedAt)}</td>
-                      <td className="mono">{series || '—'}</td>
-                      <td>{body}</td>
-                      <td>
-                        {n.url
-                          ? <a className="btn btn-sm" href={n.url} target="_blank" rel="noopener noreferrer" title="Открыть сообщение на сайте MOEX">MOEX ↗</a>
-                          : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+        <div className="pl-grid">
+          {rows.map(x => (
+            <PlacementCard key={x.id} item={x} kind={x.kind} today={today} />
+          ))}
+        </div>
       )}
+
+      {/* ── Что здесь есть, а чего нет ────────────────────────────── */}
+      <Panel title="Что здесь есть, а чего нет" style={{ marginTop: 14 }}>
+        <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.75 }}>
+          Источник — <b>сообщения Московской биржи о размещениях</b>: у каждой карточки ссылка MOEX ↗ на
+          первоисточник. Робот читает их и складывает в файл рядом с сайтом.
+          <br />
+          <b>Есть:</b> эмитент, серия, регистрационный номер, ISIN, дата начала размещения, период сбора заявок
+          с временем, режим и цена размещения, андеррайтер; по завершённым выпускам — фактический объём,
+          количество бумаг и доля размещённых.
+          <br />
+          <b>Нет и не выдумано:</b> рейтинги — у источника нет ни агентства, ни даты присвоения;
+          ориентир купона <i>до</i> размещения — ставку раскрывает эмитент, а не биржа; книга заявок — биржа её
+          не публикует. Купон, тип купона и погашение подтягиваются из торговых данных биржи по ISIN или
+          регистрационному номеру и появляются <i>после</i> выхода бумаги на торги — до этого в карточке прочерки.
+          <br />
+          <b>Полнота:</b> робот показывает то, что биржа успела опубликовать. Если эмитент объявил размещение
+          только своим раскрытием, не через биржу, его в списке не будет.
+        </div>
+      </Panel>
 
       <div className="c-3" style={{ fontSize: 11, marginTop: 10, lineHeight: 1.6 }}>
         Данные предоставляются «как есть» и не являются индивидуальной инвестиционной рекомендацией.
-        {' '}Параметры выпуска появляются в его карточке после начала торгов.
       </div>
     </div>
   );

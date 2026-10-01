@@ -546,23 +546,39 @@ export function moexIssueUrl(secidOrIsin, board) {
   return `https://www.moex.com/ru/issue.aspx?board=${b}&code=${secidOrIsin}`;
 }
 
-/* ── анонсы первичных размещений ─────────────────────────────────── *
- * MOEX не публикует книгу заявок и ориентир купона в машиночитаемом
- * виде. Доступны только новостные анонсы «О порядке сбора заявок…».
- * Отдаём ровно их и честно называем анонсами, а не базой размещений.
+/* ── первичные размещения ────────────────────────────────────────── *
+ *
+ * Биржа публикует по каждому размещению отдельное сообщение, в котором
+ * перечислены эмитент, серия, регистрационный номер, торговый код
+ * (ISIN), дата начала размещения, период сбора заявок с точным временем,
+ * режим и цена размещения. В сообщениях «Итоги выпуска» — фактический
+ * объём размещённого, количество бумаг, фактическая цена и доля
+ * размещённых.
+ *
+ * Список новостей (iss.moex.com/iss/sitenews.json) читается из браузера
+ * напрямую: там есть CORS. А тексты сообщений лежат обычными страницами
+ * на www.moex.com и CORS-заголовка не отдают — из браузера их взять
+ * нельзя. Поэтому тексты разбирает робот (scripts/placements.mjs) и
+ * кладёт рядом с сайтом файл placements.json — как и отчётность ГИР БО.
+ *
+ * Чего в этих данных нет и не будет: рейтингов (у источника нет ни
+ * агентства, ни даты присвоения) и ориентира купона до размещения
+ * (ставку раскрывает эмитент, а не биржа).
  */
-export async function fetchPlacementNews() {
-  const d = await iss('/sitenews.json');
-  const rows = d.sitenews || [];
-  return rows
-    .filter(n => /размещ|сбор заявок/i.test(n.title || ''))
-    .map(n => ({
-      id: n.id,
-      title: (n.title || '').replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim(),
-      publishedAt: n.published_at,
-      tag: n.tag,
-      url: `https://www.moex.com/n${n.id}/?nt=101`,
-    }));
+let placementsCache;
+let placementsPromise;
+
+/** Все разобранные анонсы размещений. Файл читается один раз за сессию. */
+export async function fetchPlacements() {
+  if (placementsCache) return placementsCache;
+  if (!placementsPromise) {
+    const base = import.meta.env?.BASE_URL || '/';
+    placementsPromise = fetch(`${base}placements.json`, { credentials: 'omit' })
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then(d => { placementsCache = d; return d; });
+  }
+  return placementsPromise;
 }
 
 /* ── субфедеральные и муниципальные облигации ─────────────────────── *
