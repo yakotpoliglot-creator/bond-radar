@@ -155,6 +155,21 @@ async function main() {
     process.exit(1);
   }
 
+  /* Ключи сортируем. Список на сайте упорядочен по доходности и каждый
+     день перетасовывается: без сортировки один изменившийся рейтинг
+     переписывал бы файл целиком, робот коммитил бы шум, а выкладка
+     запускалась бы каждый день без причины. */
+  const orderedRatings = {};
+  for (const isin of Object.keys(ratings).sort()) orderedRatings[isin] = ratings[isin];
+
+  const orderedScale = {};
+  for (const code of Object.keys(scale).map(Number).sort((a, b) => a - b)) orderedScale[code] = scale[code];
+
+  const orderedByRating = {};
+  for (const sym of Object.keys(byRating).sort((a, b) => (byRating[b] - byRating[a]) || a.localeCompare(b))) {
+    orderedByRating[sym] = byRating[sym];
+  }
+
   const payload = {
     generatedAt: new Date().toISOString(),
     source: `${BASE}${LIST_PATH}`,
@@ -168,13 +183,14 @@ async function main() {
       rowsScanned: scannedRows,
       withRating: rated,
       coveragePercent: scannedRows ? Math.round(rated / scannedRows * 1000) / 10 : 0,
-      byRating,
+      byRating: orderedByRating,
     },
-    scale,
-    ratings,
+    scale: orderedScale,
+    ratings: orderedRatings,
   };
 
-  /* Пишем только при изменении: иначе робот коммитил бы одно и то же. */
+  /* Пишем только при изменении: иначе робот коммитил бы одно и то же.
+     Сравниваем без отметки времени и счётчиков — они меняются всегда. */
   if (prev) {
     const a = JSON.stringify({ ...prev, generatedAt: null, stats: null });
     const b = JSON.stringify({ ...payload, generatedAt: null, stats: null });
@@ -182,6 +198,21 @@ async function main() {
       console.log('Данные не изменились — файл не перезаписываем.');
       return;
     }
+    /* Правка одной бумаги — не повод переписывать весь файл: показываем,
+       что именно изменилось, это видно в журнале прогона. */
+    const changed = [];
+    const oldR = prev.ratings || {};
+    for (const isin of Object.keys(orderedRatings)) {
+      const was = oldR[isin]?.r ?? null;
+      const now = orderedRatings[isin].r;
+      if (was !== now) changed.push(`${isin}: ${was ?? '—'} → ${now}`);
+    }
+    for (const isin of Object.keys(oldR)) {
+      if (!orderedRatings[isin]) changed.push(`${isin}: ${oldR[isin].r} → нет в источнике`);
+    }
+    console.log(`Изменилось рейтингов: ${changed.length}`);
+    for (const line of changed.slice(0, 20)) console.log('  ' + line);
+    if (changed.length > 20) console.log(`  … и ещё ${changed.length - 20}`);
   }
 
   writeFileSync(OUT, JSON.stringify(payload));
