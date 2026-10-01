@@ -389,6 +389,30 @@ function splitIssueBlocks(lines) {
   return blocks;
 }
 
+/** Эмитент из сообщения, где он написан голой строкой без метки.
+
+    В сообщениях о приостановке торгов эмитент идёт просто строкой перед
+    «Наименование ценной бумаги», без подписи — обычный разбор по меткам
+    его не видит, и карточка оставалась без эмитента. Берём строку перед
+    названием бумаги (или перед регномером), если она похожа на название
+    организации. */
+function issuerFromText(lines) {
+  const marks = [
+    /^Наименование ценной бумаги/i,
+    /^Идентификационный\s*\/?\s*[Рр]егистрационный номер выпуска/i,
+    /^Регистрационный номер выпуска/i,
+  ];
+  for (let i = 0; i < lines.length; i++) {
+    if (!marks.some(re => re.test(lines[i]))) continue;
+    for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
+      const line = lines[j];
+      if (line.length > 300 || /:$/.test(line)) continue;
+      if (ORG_RE.test(line) && !/^Наименование/i.test(line)) return line.trim();
+    }
+  }
+  return null;
+}
+
 /** «10:00 - 23:50 Сбор заявок возможен в вечернюю сессию…» → «10:00 - 23:50».
     Значение поля накапливается до следующей метки, а после расписания
     биржа пишет ещё абзац правил («Процедура контроля обеспечения…»).
@@ -611,7 +635,13 @@ async function main() {
   let parsed = 0; let reused = 0; let failed = 0;
   for (const a of announcements) {
     const cached = prevById.get(String(a.id));
-    if (cached && a.publishedAt < refreshFrom && !cached.incomplete) {
+    /* Из прошлого файла берём только то, что перечитывать незачем. Два
+       исключения: неполный разбор и «приостановка» без эмитента —
+       однажды такие записи сохранились до того, как разбор научился
+       находить эмитента в сообщениях этого вида. Метка noIssuer не
+       даёт дёргать биржу за одной и той же страницей каждый прогон. */
+    const wantIssuer = a.kind === 'suspend' && cached && !cached.issuer && !cached.noIssuer;
+    if (cached && a.publishedAt < refreshFrom && !cached.incomplete && !wantIssuer) {
       items.push({ ...cached, kind: a.kind, title: a.title, url: a.url });
       reused++;
       continue;
@@ -648,11 +678,13 @@ async function main() {
         const { val } = fieldsOf(lines);
         const rec = recordFromFields({
           kind: a.kind, id: String(a.id), title: a.title,
-          publishedAt: a.publishedAt, url: a.url, issuer: null, val,
+          publishedAt: a.publishedAt, url: a.url,
+          issuer: issuerFromText(lines), val,
         });
         /* Для «приостановки» достаточно ISIN и серии: дат размещения в
            таком сообщении нет по определению. */
         if (!rec.isin && !rec.placementStart && !rec.book) rec.incomplete = true;
+        if (!rec.issuer) rec.noIssuer = true;
         items.push(rec);
       }
       parsed++;
@@ -761,7 +793,7 @@ async function main() {
 
 /* Разбор вынесен в экспорт: его удобно проверять точечно, не гоняя
    весь сбор (scripts/verify-placements.mjs). */
-export { htmlToLines, bodyOf, kindOf, matchLabel, fieldsOf, splitIssueBlocks, recordFromFields };
+export { htmlToLines, bodyOf, kindOf, matchLabel, fieldsOf, splitIssueBlocks, recordFromFields, issuerFromText };
 
 /* Запуск сбора — только при прямом вызове файла, чтобы импорт ради
    проверки разбора не запускал весь обход биржи. */
