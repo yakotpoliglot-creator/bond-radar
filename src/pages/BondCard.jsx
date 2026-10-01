@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
 import { fetchBonds, fetchBondCard, fetchIssuerInfo, moexReportsUrl, moexIssueUrl } from '../api/moex';
-import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, timesWord } from '../components/ui';
+import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, RatingTag, timesWord } from '../components/ui';
 import { nf, money, date, dateShort, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
@@ -293,6 +293,7 @@ export default function BondCard() {
           {bond?.isCurrency && <span className="tag a">{bond.currency}</span>}
           {bond?.couponKind && <CouponTag kind={bond.couponKind} />}
           {bond?.listLevel != null && <>Уровень листинга: <LevelTag level={bond.listLevel} /></>}
+          {card?.rating && <>Рейтинг: <RatingTag rating={card.rating} code={card.ratingCode} /></>}
         </div>
       </div>
 
@@ -506,9 +507,15 @@ export default function BondCard() {
                   : ''}.
               </p>
               <p className="c-3">
-                Кредитного рейтинга, отчётности и показателей вроде EBITDA в данных Московской биржи нет —
-                такие сведения по выпуску здесь не приводятся. Бухгалтерская отчётность эмитента
-                (выручка и активы по годам) берётся из ГИР БО ФНС и показана в карточке эмитента.
+                {card?.rating
+                  ? <>Рейтинг {card.rating} взят из таблицы котировок smart-lab.ru: агентство и дата присвоения
+                    в источнике не указаны, рейтинг относится к эмитенту. Это ориентир, а не выписка из отчёта
+                    рейтингового агентства. </>
+                  : <>Кредитного рейтинга этой бумаги в источнике рейтингов (таблица котировок smart-lab.ru)
+                    нет — вероятно, её там просто не показывают. </>}
+                Отчётности и показателей вроде EBITDA в данных Московской биржи нет — такие сведения по выпуску
+                здесь не приводятся. Бухгалтерская отчётность эмитента (выручка и активы по годам) берётся из
+                ГИР БО ФНС и показана в карточке эмитента.
               </p>
               <p className="c-3" style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginBottom: 0 }}>
                 Не является индивидуальной инвестиционной рекомендацией.

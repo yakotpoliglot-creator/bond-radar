@@ -51,6 +51,35 @@ export function LevelTag({ level }) {
   return <span className={'tag ' + cls}>{level ?? '—'}</span>;
 }
 
+/* ── рейтинг ─────────────────────────────────────────────────────── *
+ *
+ * Значок рейтинга из таблицы котировок smart-lab: AAA…D. Агентства и
+ * даты присвоения в источнике нет, поэтому это ориентир, а не выписка
+ * из отчёта агентства — так и написано в подсказке.
+ *
+ * Цвет по месту на шкале (1 — D, 20 — AAA): инвестиционный уровень
+ * (BBB- и выше) зелёный, середина синяя, спекулятивный — янтарный,
+ * преддефолтные и дефолт — красный.
+ */
+export const RATING_HINT = 'Рейтинг по данным таблицы котировок smart-lab.ru. '
+  + 'Агентство и дата присвоения в источнике не указаны, рейтинг относится к эмитенту. '
+  + 'Это ориентир, а не выписка из отчёта рейтингового агентства. '
+  + 'Прочерк означает, что в источнике этого выпуска нет: рейтинг показан примерно '
+  + 'для половины бумаг нашего списка.';
+
+function ratingClass(code) {
+  if (code == null) return '';
+  if (code >= 17) return 'g';
+  if (code >= 13) return 'b';
+  if (code >= 10) return 'a';
+  return 'r';
+}
+
+export function RatingTag({ rating, code, title }) {
+  if (!rating) return <span className="c-3" title={RATING_HINT}>—</span>;
+  return <span className={'tag ' + ratingClass(code)} title={title || RATING_HINT}>{rating}</span>;
+}
+
 /* «1 раз», «2 раза», «12 раз». Число выплат — это счётчик, а не измерение,
    и запись «1,0» или «2,0 раз в год» читается как ошибка округления. */
 export function timesWord(n) {
@@ -132,6 +161,14 @@ const COLS = {
       : <span className="c-3">—</span>),
   },
   level: { label: 'Лист.', sort: b => b.listLevel ?? 9, cell: b => <LevelTag level={b.listLevel} /> },
+  rating: {
+    /* Сортируем по коду шкалы, а не по значку: строками «AAA» меньше,
+       чем «A-», и порядок получился бы обратный желаемому. */
+    label: 'Рейтинг',
+    sort: b => b.ratingCode ?? -1,
+    hint: RATING_HINT,
+    cell: b => <RatingTag rating={b.rating} code={b.ratingCode} />,
+  },
   turnover: {
     label: 'Оборот', sort: b => b.turnover || 0,
     cell: b => <span className="mono c-2" style={{ fontSize: 11 }}>{b.turnover ? money(b.turnover) : '—'}</span>,
@@ -156,7 +193,7 @@ const COLS = {
   },
 };
 
-export const DEFAULT_COLS = ['name', 'ytm', 'coupon', 'price', 'nkd', 'duration', 'mat', 'offer', 'level', 'turnover'];
+export const DEFAULT_COLS = ['name', 'rating', 'ytm', 'coupon', 'price', 'nkd', 'duration', 'mat', 'offer', 'level', 'turnover'];
 
 export function BondTable({ bonds, cols = DEFAULT_COLS, limit, linkTo = true, initialSort = 'ytm' }) {
   const [sortKey, setSortKey] = useState(initialSort);

@@ -1,0 +1,63 @@
+name: Рейтинги (smart-lab)
+
+# Робот собирает кредитные рейтинги из таблицы котировок smart-lab.ru —
+# 16 страниц по 100 выпусков, у каждой строки значок рейтинга и ISIN.
+#
+# Почему робот, а не браузер: страница отдаётся без CORS, из браузера её
+# прочитать нельзя.
+#
+# Почему раз в сутки: рейтинги присваивают не каждый день, а лишние
+# обращения к чужому сайту ни к чему. robots.txt smart-lab.ru /q/bonds/
+# не запрещает.
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  # Правку самого робота проверяем сразу, а не на следующий день.
+  push:
+    paths:
+      - 'scripts/ratings.mjs'
+      - '.github/workflows/ratings.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ratings
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Пульс против отключения расписания: GitHub выключает
+      # запланированные workflow в публичном репозитории после 60 дней
+      # без коммитов. Рейтинги меняются редко, поэтому раз в месяц
+      # пишем текущий месяц в крошечный файл.
+      - name: Пульс — не даём GitHub отключить расписание
+        run: echo "$(date -u +%Y-%m)" > .github/last-robot-run.txt
+
+      - name: Собрать рейтинги
+        run: node scripts/ratings.mjs
+
+      - name: Закоммитить изменения
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/ratings.json .github/last-robot-run.txt
+          if git diff --staged --quiet; then
+            echo "Изменений нет — коммит не нужен."
+          else
+            git commit -m "Робот: кредитные рейтинги $(date -u +%Y-%m-%d)"
+            git push
+          fi

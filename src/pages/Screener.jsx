@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchBonds, COLLECTIONS, COUPON_LABEL, daysUntil } from '../api/moex';
-import { BondTable, Pager, Loading, ErrorBox, Panel, Kpi } from '../components/ui';
+import { BondTable, Pager, Loading, ErrorBox, Panel, Kpi, RATING_HINT } from '../components/ui';
 import { nf } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
@@ -29,6 +29,24 @@ const MATURITY_LABEL = {
   '5+': '5+ лет',
 };
 
+/* Рейтинг «не ниже»: место на шкале smart-lab (1 — D, 20 — AAA).
+   Номер в значении — код шкалы, он же в ratings.json. */
+const RATING_MIN = {
+  all: null,
+  inv: 11,      // инвестиционный уровень: BBB- и выше
+  a: 14,        // A- и выше
+  aa: 17,       // AA- и выше
+  aaa: 20,      // только AAA
+};
+
+const RATING_LABEL = {
+  all: 'Любой',
+  inv: 'BBB- и выше',
+  a: 'A- и выше',
+  aa: 'AA- и выше',
+  aaa: 'Только AAA',
+};
+
 /* Значения фильтров по умолчанию (hideAnomaly включён по требованию) */
 const EMPTY_FILTERS = {
   search: '',
@@ -36,6 +54,7 @@ const EMPTY_FILTERS = {
   ytmMax: '',
   kind: 'all',
   level: 'all',
+  rating: 'all',       // рейтинг не ниже (данные smart-lab)
   maturity: 'all',
   turnoverMin: '',
   hideAnomaly: true,
@@ -79,7 +98,7 @@ const FREQ_LABEL = {
 /* Колонки скринера — шире, чем в подборках: показываем те метрики,
    по которым фильтруем, чтобы результат можно было проверить глазами. */
 const SCREENER_COLS = [
-  'name', 'ytm', 'zspread', 'coupon', 'currentYield',
+  'name', 'rating', 'ytm', 'zspread', 'coupon', 'currentYield',
   'price', 'duration', 'mat', 'offer', 'couponsPerYear', 'level', 'turnover',
 ];
 
@@ -134,6 +153,12 @@ function matchFilters(b, f) {
 
   // Уровень листинга
   if (f.level !== 'all' && String(b.listLevel) !== f.level) return false;
+
+  /* Рейтинг «не ниже»: сравниваем по месту на шкале (1 — D, 20 — AAA).
+     Бумага без рейтинга условие не проходит: про неё мы просто ничего
+     не знаем, и пропускать её значило бы обещать то, чего нет. */
+  const rMin = RATING_MIN[f.rating];
+  if (rMin != null && !(b.ratingCode != null && b.ratingCode >= rMin)) return false;
 
   // Срок до погашения (через daysUntil; бумаги без даты погашения не проходят)
   const range = MATURITY[f.maturity];
@@ -330,6 +355,7 @@ export default function Screener() {
     const cols = [
       ['Выпуск', b => b.shortname],
       ['ISIN', b => b.isin],
+      ['Рейтинг (smart-lab)', b => b.rating],
       ['Цена, %', b => b.price],
       ['YTM, %', b => b.ytm],
       ['Z-спред, п.п.', b => b.zSpread],
@@ -471,6 +497,15 @@ export default function Screener() {
               <option value="1">1 уровень</option>
               <option value="2">2 уровень</option>
               <option value="3">3 уровень</option>
+            </select>
+          </div>
+
+          {/* Рейтинг — данные smart-lab. Бумага без рейтинга условие
+              «не ниже» не проходит; это написано в подсказке. */}
+          <div className="fg">
+            <label title={RATING_HINT}>Рейтинг не ниже</label>
+            <select className="sel" value={filters.rating} onChange={e => set({ rating: e.target.value })}>
+              {Object.entries(RATING_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
             </select>
           </div>
 

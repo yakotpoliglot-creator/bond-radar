@@ -313,6 +313,52 @@ let bondsCache = null;
 let bondsPromise = null;
 
 /** Все облигации TQCB + TQOB (~3095 шт). Запросы идут параллельно. */
+/* ── кредитные рейтинги ──────────────────────────────────────────── *
+ *
+ * Рейтинги берём из таблицы котировок smart-lab.ru: у каждой строки есть
+ * значок рейтинга и ссылка на выпуск с ISIN — по нему рейтинг и
+ * связывается с нашими данными биржи.
+ *
+ * Страница отдаётся без CORS, из браузера её не прочитать, поэтому её
+ * разбирает робот (scripts/ratings.mjs) и кладёт рядом с сайтом файл
+ * ratings.json — тот же приём, что с отчётностью ГИР БО и первичкой.
+ *
+ * Чего в источнике НЕТ и мы не додумываем: агентства (значок показан без
+ * указания, АКРА это или Эксперт РА) и даты присвоения. Поэтому в
+ * подсказке к колонке прямо сказано, что это ориентир по данным
+ * smart-lab, а не выписка из отчёта рейтингового агентства.
+ */
+let ratingsCache;
+let ratingsPromise;
+
+/** Рейтинги по ISIN: { ratings: { ISIN: { r, c } }, scale, stats }. */
+export function fetchRatings() {
+  if (ratingsCache) return Promise.resolve(ratingsCache);
+  if (!ratingsPromise) {
+    const base = import.meta.env?.BASE_URL || '/';
+    ratingsPromise = fetch(`${base}ratings.json`, { credentials: 'omit' })
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then(d => { ratingsCache = d; return d; });
+  }
+  return ratingsPromise;
+}
+
+/** Проставляет бумагам рейтинг и место на шкале (нужно для сортировки). */
+async function withRatings(list) {
+  const data = await fetchRatings();
+  const map = data?.ratings;
+  if (!map) return list;
+  for (const b of list) {
+    const hit = b.isin ? map[b.isin] : null;
+    b.rating = hit?.r || null;
+    /* Код шкалы: 1 — D, 20 — AAA. Сортировать по значку нельзя:
+       строками «AAA» оказалось бы меньше, чем «A-». */
+    b.ratingCode = hit?.c ?? null;
+  }
+  return list;
+}
+
 export function fetchBonds({ force = false } = {}) {
   if (force) { bondsCache = null; bondsPromise = null; }
   if (bondsCache) return Promise.resolve(bondsCache);
@@ -336,6 +382,12 @@ export function fetchBonds({ force = false } = {}) {
         bondsCache = all.filter(b => !seen.has(b.secid) && seen.add(b.secid));
         return bondsCache;
       })
+      /* Рейтинги подмешиваем к списку бумаг, а не к каждой странице
+         отдельно: так колонка появляется сразу везде, где таблица
+         строится из этого списка (скринер, подборки, ОФЗ, ВДО). Если
+         файла нет — просто не будет рейтингов, страницы работать
+         не перестанут. */
+      .then(list => withRatings(list))
       .catch(e => { bondsPromise = null; throw e; });
   }
   return bondsPromise;
@@ -405,9 +457,17 @@ export async function fetchBondCard(secidOrIsin) {
       type: o.offertype,
     }));
 
+  /* Рейтинг у карточки: ищем по ISIN выпуска. Если файла рейтингов нет,
+     поля просто останутся пустыми — карточка работает как прежде. */
+  const ratings = await fetchRatings();
+  const rHit = ratings?.ratings?.[description.ISIN] || null;
+
   return {
     secid: id,
     description,
+    rating: rHit?.r || null,
+    ratingCode: rHit?.c ?? null,
+    ratingSource: ratings?.source || null,
     issuerId: description.EMITTER_ID || null,
     coupons,
     amortizations,
