@@ -20,6 +20,12 @@ name: Первичные размещения
 on:
   schedule:
     - cron: '23 */3 * * *'
+  # Правку самого робота проверяем сразу: иначе ошибку в разборе
+  # заметишь только через три часа, да и то если полезешь в логи.
+  push:
+    paths:
+      - 'scripts/placements.mjs'
+      - '.github/workflows/placements.yml'
   workflow_dispatch:
 
 permissions:
