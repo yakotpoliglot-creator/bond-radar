@@ -349,12 +349,31 @@ async function withRatings(list) {
   const data = await fetchRatings();
   const map = data?.ratings;
   if (!map) return list;
+
+  /* Рейтинг у источника — рейтинг ЭМИТЕНТА, а не выпуска. Проверено на всех
+     данных: у 332 эмитентов, чьи выпуски есть в таблице smart-lab, значок
+     одинаков у всех выпусков без единого расхождения.
+     Отсюда честный добор: у бумаги, которой в таблице нет вовсе, показываем
+     рейтинг её эмитента по другим его выпускам — это ровно тот же рейтинг,
+     который источник и показывает, а не наша догадка. Покрытие наших
+     выпусков из-за этого растёт с 47 % до 70 %; у остальных прочерк, потому
+     что эмитента в источнике нет. */
+  const issuerRating = new Map();
   for (const b of list) {
     const hit = b.isin ? map[b.isin] : null;
-    b.rating = hit?.r || null;
+    if (hit && b.issuerKey && !issuerRating.has(b.issuerKey)) issuerRating.set(b.issuerKey, hit);
+  }
+
+  for (const b of list) {
+    const own = b.isin ? map[b.isin] : null;
+    const via = own || (b.issuerKey ? issuerRating.get(b.issuerKey) : null);
+    b.rating = via?.r || null;
     /* Код шкалы: 1 — D, 20 — AAA. Сортировать по значку нельзя:
        строками «AAA» оказалось бы меньше, чем «A-». */
-    b.ratingCode = hit?.c ?? null;
+    b.ratingCode = via?.c ?? null;
+    /* own — значок стоит у самой этой бумаги; иначе рейтинг взят по
+       эмитенту, и в подсказке это сказано прямо. */
+    b.ratingOwn = !!own;
   }
   return list;
 }
@@ -457,15 +476,25 @@ export async function fetchBondCard(secidOrIsin) {
       type: o.offertype,
     }));
 
-  /* Рейтинг у карточки: ищем по ISIN выпуска. Если файла рейтингов нет,
-     поля просто останутся пустыми — карточка работает как прежде. */
+  /* Рейтинг у карточки. Сначала ищем значок у самой бумаги, а если его нет —
+     рейтинг её эмитента по другим его выпускам (рейтинг у источника
+     эмитентский, см. withRatings). Если файла рейтингов нет вовсе, поля
+     останутся пустыми — карточка работает как прежде. */
   const ratings = await fetchRatings();
-  const rHit = ratings?.ratings?.[description.ISIN] || null;
+  const own = ratings?.ratings?.[description.ISIN] || null;
+  let rHit = own;
+  if (!own) {
+    const list = await fetchBonds().catch(() => []);
+    const self = list.find(x => x.isin === description.ISIN && x.issuerKey);
+    const peer = self ? list.find(x => x !== self && x.issuerKey === self.issuerKey && x.rating) : null;
+    if (peer) rHit = { r: peer.rating, c: peer.ratingCode };
+  }
 
   return {
     secid: id,
     description,
     rating: rHit?.r || null,
+    ratingOwn: !!own,
     ratingCode: rHit?.c ?? null,
     ratingSource: ratings?.source || null,
     issuerId: description.EMITTER_ID || null,

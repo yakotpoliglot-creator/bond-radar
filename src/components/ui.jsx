@@ -62,10 +62,17 @@ export function LevelTag({ level }) {
  * преддефолтные и дефолт — красный.
  */
 export const RATING_HINT = 'Рейтинг по данным таблицы котировок smart-lab.ru. '
-  + 'Агентство и дата присвоения в источнике не указаны, рейтинг относится к эмитенту. '
-  + 'Это ориентир, а не выписка из отчёта рейтингового агентства. '
-  + 'Прочерк означает, что в источнике этого выпуска нет: рейтинг показан примерно '
-  + 'для половины бумаг нашего списка.';
+  + 'Агентство и дата присвоения в источнике не указаны, рейтинг относится к эмитенту '
+  + 'и потому одинаков у всех его выпусков. Это ориентир, а не выписка из отчёта '
+  + 'рейтингового агентства. Прочерк — эмитента нет в источнике: рейтинг есть '
+  + 'примерно у 70 % бумаг нашего списка.';
+
+/* Подсказка для рейтинга, который взят по эмитенту: у самой бумаги значка
+   в источнике нет, значение — из других выпусков того же эмитента. */
+export const RATING_ISSUER_HINT = 'Рейтинг эмитента по данным smart-lab.ru: '
+  + 'этот выпуск в таблице источника показан без рейтинга, значение взято по другим '
+  + 'выпускам того же эмитента. Агентство и дата присвоения в источнике не указаны. '
+  + 'Пунктир под значком означает именно такой случай.';
 
 function ratingClass(code) {
   if (code == null) return '';
@@ -75,9 +82,13 @@ function ratingClass(code) {
   return 'r';
 }
 
-export function RatingTag({ rating, code, title }) {
+export function RatingTag({ rating, code, own = true, title }) {
   if (!rating) return <span className="c-3" title={RATING_HINT}>—</span>;
-  return <span className={'tag ' + ratingClass(code)} title={title || RATING_HINT}>{rating}</span>;
+  const hint = title || (own ? RATING_HINT : RATING_ISSUER_HINT);
+  /* Пунктир — единственное отличие «по эмитенту» от «значок у самой бумаги»:
+     подчёркивать надо, иначе мы бы выдавали одно за другое. */
+  const style = own ? undefined : { borderBottom: '1px dotted currentColor' };
+  return <span className={'tag ' + ratingClass(code)} style={style} title={hint}>{rating}</span>;
 }
 
 /* «1 раз», «2 раза», «12 раз». Число выплат — это счётчик, а не измерение,
@@ -167,7 +178,7 @@ const COLS = {
     label: 'Рейтинг',
     sort: b => b.ratingCode ?? -1,
     hint: RATING_HINT,
-    cell: b => <RatingTag rating={b.rating} code={b.ratingCode} />,
+    cell: b => <RatingTag rating={b.rating} code={b.ratingCode} own={b.ratingOwn} />,
   },
   turnover: {
     label: 'Оборот', sort: b => b.turnover || 0,

@@ -293,7 +293,7 @@ export default function BondCard() {
           {bond?.isCurrency && <span className="tag a">{bond.currency}</span>}
           {bond?.couponKind && <CouponTag kind={bond.couponKind} />}
           {bond?.listLevel != null && <>Уровень листинга: <LevelTag level={bond.listLevel} /></>}
-          {card?.rating && <>Рейтинг: <RatingTag rating={card.rating} code={card.ratingCode} /></>}
+          {card?.rating && <>Рейтинг: <RatingTag rating={card.rating} code={card.ratingCode} own={card.ratingOwn} /></>}
         </div>
       </div>
 
@@ -508,9 +508,12 @@ export default function BondCard() {
               </p>
               <p className="c-3">
                 {card?.rating
-                  ? <>Рейтинг {card.rating} взят из таблицы котировок smart-lab.ru: агентство и дата присвоения
-                    в источнике не указаны, рейтинг относится к эмитенту. Это ориентир, а не выписка из отчёта
-                    рейтингового агентства. </>
+                  ? <>{card.ratingOwn
+                    ? `Рейтинг ${card.rating} взят из таблицы котировок smart-lab.ru`
+                    : `Рейтинг ${card.rating} — рейтинг эмитента по данным smart-lab.ru; сам этот выпуск `
+                      + 'в таблице источника показан без рейтинга, значение взято по другим выпускам того же эмитента'}.
+                    {' '}Агентство и дата присвоения в источнике не указаны, рейтинг относится к эмитенту. Это
+                    ориентир, а не выписка из отчёта рейтингового агентства. </>
                   : <>Кредитного рейтинга этой бумаги в источнике рейтингов (таблица котировок smart-lab.ru)
                     нет — вероятно, её там просто не показывают. </>}
                 Отчётности и показателей вроде EBITDA в данных Московской биржи нет — такие сведения по выпуску
