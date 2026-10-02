@@ -202,6 +202,13 @@ const COLS = {
       ? <span className="c-3">—</span>
       : <span className="mono">{nf(b.currentYield, 2)}%</span>),
   },
+  lotCost: {
+    label: 'Стоимость лота, ₽', sort: b => b._lotCost ?? -999,
+    cell: b => {
+      const c = b._lotCost;
+      return c != null ? <span className="mono">{nf(c, 0)}</span> : <span className="c-3">—</span>;
+    },
+  },
 };
 
 export const DEFAULT_COLS = ['name', 'rating', 'ytm', 'coupon', 'price', 'nkd', 'duration', 'mat', 'offer', 'level', 'turnover'];

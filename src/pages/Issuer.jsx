@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboDate, girboUrl, bondsOfIssuer, fetchIssuerProfile, COUPON_LABEL, moexReportsUrl } from '../api/moex';
+import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboDate, girboUrl, bondsOfIssuer, fetchIssuerProfile, fetchFundamentals, findIssuerFundamentals, COUPON_LABEL, moexReportsUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox } from '../components/ui';
+import Fundamentals from '../components/Fundamentals';
 import { nf, money, dateShort, dateTime } from '../lib/format';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -20,6 +21,9 @@ export default function Issuer() {
   /* Дата сбора файла отчётности: видно, не устарел ли он — робот ходит в
      ФНС раз в неделю. */
   const [girboDate, setGirboDate] = useState(null);
+  /* МСФО-отчётность компании со smart-lab: находится по названию
+     эмитента среди собранных тикеров акций. Только точное совпадение. */
+  const [fdata, setFdata] = useState(null);
   const [passport, setPassport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -97,6 +101,24 @@ export default function Issuer() {
     fetchGirboDate().then(d => { if (alive) setGirboDate(d); }).catch(() => {});
     return () => { alive = false; };
   }, []);
+
+  /* ── МСФО компании со smart-lab (по названию эмитента) ─────────── *
+   * У эмитента облигаций нет тикера акции, поэтому отчётность ищем по
+   * названию компании. Сопоставление строгое — только точное совпадение
+   * после нормализации. «Банк ДОМ.РФ» и «ДОМ.РФ» — разные организации,
+   * и показать отчётность одной на странице другой значит выдать чужое
+   * за своё. Лучше не показать ничего, чем показать не то.
+   */
+  useEffect(() => {
+    let alive = true;
+    setFdata(null);
+    const names = [emitter?.title, info?.title, first?.name, first?.shortname];
+    if (!names.some(Boolean)) return;
+    fetchFundamentals()
+      .then(f => { if (alive) setFdata(findIssuerFundamentals(f, names)); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [emitter?.title, info?.title, first?.name, first?.shortname]);
 
   /* ── доступные типы купона для фильтра ─────────────────────────── */
   const kinds = useMemo(() => {
@@ -376,6 +398,24 @@ export default function Issuer() {
           <Link className="btn btn-sm" to={`/issuer/${key}`} onClick={() => window.scrollTo(0, 0)}>↑ Наверх</Link>
         </div>
       </Panel>
+
+      {/* ── МСФО компании со smart-lab ────────────────────────────── *
+       * Показываем перед бухгалтерской отчётностью: МСФО богаче —
+       * там есть EBITDA и коэффициенты, которых в РСБУ не бывает. */}
+      {fdata && (
+        <div style={{ marginTop: 14 }}>
+          <div className="c-3" style={{ fontSize: 11, marginBottom: 8, lineHeight: 1.65 }}>
+            Отчётность найдена по названию эмитента — тикер <b>{fdata.ticker}</b>
+            {fdata.data?.n ? ` (${fdata.data.n})` : ''}. Это данные <b>компании</b>, а облигации
+            может выпускать другое юридическое лицо той же группы: финансы группы и финансы
+            конкретного заёмщика — не одно и то же.
+          </div>
+          <Fundamentals
+            data={fdata.data}
+            right={<span className="c-3" style={{ fontSize: 10.5 }}>источник — smart-lab.ru</span>}
+          />
+        </div>
+      )}
 
       {/* ── Бухгалтерская отчётность из ГИР БО ФНС ────────────────── */}
       {girbo && !girbo.closed && girbo.years?.length ? (

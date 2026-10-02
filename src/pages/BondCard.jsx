@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
 import { fetchBonds, fetchBondCard, fetchIssuerInfo, moexReportsUrl, moexIssueUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, RatingTag, timesWord } from '../components/ui';
+import YieldCalculator from '../components/YieldCalculator';
 import { nf, money, date, dateShort, dateTime, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
@@ -349,6 +350,12 @@ export default function BondCard() {
           sub={offerDate ? timeLeft(offerDate) : 'оферты нет'}
         />
       </div>
+
+      {/* ── Калькулятор: «у меня есть сумма и срок» ────────────────
+          Считает на уже загруженных данных выпуска, без новых запросов.
+          key — чтобы при переходе на другой выпуск поля сбросились
+          и срок пересчитался под новую дату погашения. */}
+      <YieldCalculator key={bond?.isin || bond?.secid} bond={bond} />
 
       {/* ── График купонных выплат ────────────────────────────────── */}
       {couponsSorted.length > 0 && (

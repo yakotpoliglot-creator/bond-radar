@@ -72,6 +72,21 @@ export function timeLeft(dateStr) {
   return `через ${nf(m / 12, 1)} г.`;
 }
 
+/**
+ * Сколько лет осталось до даты — числом, для калькулятора.
+ *
+ * Отдельная функция, а не расчёт внутри компонента: `new Date()`
+ * не является чистой функцией, и вызывать её прямо в теле компонента
+ * нельзя (правило чистоты React). Здесь тот же приём, что у timeLeft.
+ * Возвращает null, если даты нет или она уже прошла.
+ */
+export function yearsUntil(dateStr) {
+  if (!dateStr) return null;
+  const days = Math.round((new Date(dateStr + 'T00:00:00') - new Date()) / 86400000);
+  if (days <= 0) return null;
+  return Math.round(days / 365 * 10) / 10;
+}
+
 /** Класс окраски для доходности */
 export function ytmClass(v) {
   if (v == null) return 'c-3';

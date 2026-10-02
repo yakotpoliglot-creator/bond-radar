@@ -58,6 +58,7 @@ const EMPTY_FILTERS = {
   maturity: 'all',
   turnoverMin: '',
   hideAnomaly: true,
+  budget: '',          // бюджет — у меня есть N ₽
   /* ── добавлено по образцу платного скринера ═─────────────────────
      Всё это Мосбиржа отдаёт бесплатно, просто мы раньше не выводили. */
   zMin: '',            // Z-спред от, п.п. — премия к кривой ОФЗ
@@ -160,7 +161,15 @@ function matchFilters(b, f) {
   const rMin = RATING_MIN[f.rating];
   if (rMin != null && !(b.ratingCode != null && b.ratingCode >= rMin)) return false;
 
-  // Срок до погашения (через daysUntil; бумаги без даты погашения не проходят)
+  // Бюджет: «у меня есть N ₽». Стоимость покупки одного лота
+  // = (цена / 100 × номинал + НКД) × размер лота.
+  if (f.budget) {
+    const bgt = +f.budget;
+    if (bgt > 0 && b.price != null && b.lotSize != null) {
+      const lotCost = (b.price / 100 * (b.faceValue || 1000) + (b.nkd || 0)) * b.lotSize;
+      if (lotCost > bgt) return false;
+    }
+  }
   const range = MATURITY[f.maturity];
   if (range) {
     if (!b.matDate) return false;
@@ -321,6 +330,10 @@ export default function Screener() {
       if (b.ytm == null) {
         if (filters.hideAnomaly) { hidden++; continue; }
       }
+      // стоимость лота для колонки «Можно купить» при заданном бюджете
+      b._lotCost = (b.price != null && b.lotSize != null)
+        ? (b.price / 100 * (b.faceValue || 1000) + (b.nkd || 0)) * b.lotSize
+        : null;
       out.push(b);
     }
     // «не больше одного выпуска эмитента» применяем последним —
@@ -538,6 +551,20 @@ export default function Screener() {
             />
           </div>
 
+          <div className="fg">
+            <label>У меня есть, ₽</label>
+            <input
+              className="inp"
+              style={{ width: 130 }}
+              type="number"
+              step="100"
+              placeholder="например 11 500"
+              value={filters.budget}
+              onChange={e => set({ budget: e.target.value })}
+              title="Покажет только бумаги, один лот которых стоит не дороже этой суммы"
+            />
+          </div>
+
           {/* ── Z-спред: премия к кривой ОФЗ. Главная метрика скринера ── */}
           <RangePair
             label="Z-спред" unit="п.п."
@@ -679,7 +706,11 @@ export default function Screener() {
           </div>
         ) : (
           <>
-            <BondTable bonds={slice} cols={SCREENER_COLS} />
+            <BondTable bonds={slice} cols={
+              filters.budget
+                ? [...SCREENER_COLS, 'lotCost']
+                : SCREENER_COLS
+            } />
             <Pager
               page={cur}
               pages={pages}

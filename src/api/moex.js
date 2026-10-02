@@ -627,6 +627,74 @@ export async function fetchGirboByInn(inn) {
 }
 
 /** Дата сбора файла отчётности — чтобы на сайте было видно, не устарел ли он. */
+export function fetchFundamentals() {
+  if (fundamentalsCache) return Promise.resolve(fundamentalsCache);
+  if (!fundamentalsPromise) {
+    const base = import.meta.env?.BASE_URL || '/';
+    fundamentalsPromise = fetch(`${base}fundamentals.json`, { credentials: 'omit' })
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then(d => { fundamentalsCache = d; return d; });
+  }
+  return fundamentalsPromise;
+}
+let fundamentalsCache = null, fundamentalsPromise = null;
+
+export async function fetchFundamentalsDate() {
+  const d = await fetchFundamentals();
+  return d?.generatedAt || null;
+}
+
+/* ── Сопоставление эмитента облигаций с акцией ─────────────────────
+   Отчётность у источника лежит по тикеру АКЦИИ. У эмитента облигаций
+   тикера нет, поэтому ищем его по названию компании.
+
+   Здесь СОЗНАТЕЛЬНО только точное совпадение после нормализации.
+   Сопоставление «по вхождению подстроки» опасно: «Банк ДОМ.РФ» и
+   «ДОМ.РФ» — разные организации, и показать отчётность одной на
+   странице другой значит выдать чужое за своё. Лучше не показать
+   ничего, чем показать не то. */
+
+/** Убирает организационную форму, кавычки и лишние пробелы. */
+function normCompanyName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[«»"'`(),.]/g, ' ')
+    .replace(/\b(пао|оао|зао|ооо|ао|ап|публичное|акционерное|общество|компания|группа)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Название эмитента без хвостового номера выпуска: «ЛУКОЙЛ 26» → «ЛУКОЙЛ». */
+function stripIssueTail(s) {
+  return String(s || '').replace(/\s+\d+[-\dA-Za-z]*$/, '').trim();
+}
+
+/**
+ * Ищет отчётность эмитента среди собранных тикеров.
+ * @param {object} fdata — данные public/fundamentals.json
+ * @param {string[]} candidates — возможные названия эмитента
+ * @returns {{ticker:string, data:object}|null}
+ */
+export function findIssuerFundamentals(fdata, candidates) {
+  const map = fdata?.tickers;
+  if (!map) return null;
+
+  const wanted = new Set(
+    (candidates || [])
+      .flatMap(c => [c, stripIssueTail(c)])
+      .map(normCompanyName)
+      .filter(s => s.length >= 3)
+  );
+  if (!wanted.size) return null;
+
+  for (const [ticker, d] of Object.entries(map)) {
+    const n = normCompanyName(d?.n);
+    if (n && wanted.has(n)) return { ticker, data: d };
+  }
+  return null;
+}
+
 export async function fetchGirboDate() {
   const all = await fetchGirbo();
   return all?.generatedAt || null;
