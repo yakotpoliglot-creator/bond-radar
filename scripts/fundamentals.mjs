@@ -73,16 +73,29 @@ async function fetch(url, tries = RETRIES) {
    на LKOH (2025 = 3 768), GAZP (2022 = 11 674), SBER (2021 = 1 251,
    2022 = 270,5), ROSN (2021 = 8 761) — точно, до десятых. */
 
-function parseFinTable(html) {
-  if (!html) return null;
+/* ── Общее для обоих парсеров таблиц ───────────────────────────────
+   Годовая и квартальная таблицы устроены одинаково: первая таблица
+   на странице, строка показателей, подпись периода на клетку ЛЕВЕЕ
+   своего значения. Поэтому и разбор общий. */
+function tableRows(html) {
+  if (!html) return [];
   const tables = html.match(/<table[\s\S]*?<\/table>/g);
-  if (!tables?.length) return null;
-
+  if (!tables?.length) return [];
   const cellsOf = tr => [...tr.matchAll(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/g)]
     .map(c => c[0].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim());
+  return [...tables[0].matchAll(/<tr[\s\S]*?<\/tr>/g)].map(r => cellsOf(r[0]));
+}
 
-  const trs = [...tables[0].matchAll(/<tr[\s\S]*?<\/tr>/g)];
-  const rows = trs.map(r => cellsOf(r[0]));
+const round2 = v => Math.round(v * 100) / 100;
+
+/** Показатели, которые храним по промежуточным периодам (см. пояснение ниже). */
+const PERIOD_METRICS = new Set([
+  'revenue', 'opProfit', 'ebitda', 'ebitdaMargin', 'netProfit', 'netMargin',
+  'fcf', 'opFcf', 'netDebt', 'debt', 'cash', 'capex',
+]);
+
+function parseFinTable(html) {
+  const rows = tableRows(html);
   if (rows.length < 6) return null;
 
   /* ── Карта «индекс столбца данных → год» ──────────────────────────
@@ -121,8 +134,25 @@ function parseFinTable(html) {
     }
   }
 
+  /* ── Столбец LTM, он же «последние 12 месяцев» ────────────────────
+     Лежит в ЭТОЙ ЖЕ таблице, отдельно за ним ходить не нужно. У Лукойла
+     выручка за 2025 год 3 768 млрд, а LTM — 3 919: это скользящие
+     двенадцать месяцев, то есть «как дела сейчас», а не за прошлый год.
+     Подпись «LTM ?» стоит на клетку левее значения — правило то же,
+     что и у годов. Вопросительный знак у источника означает, что
+     значение досчитано, а не взято из отчёта; так и подпишем. */
+  let ltmAt = null;
+  for (const row of rows) {
+    for (let i = 0; i < row.length; i++) {
+      if (/^ltm/i.test((row[i] || '').trim())) { ltmAt = i + 1; break; }
+    }
+    if (ltmAt != null) break;
+  }
+
   /* ── Показатели ── */
   const metrics = {};
+  const ltm = {};
+  const collisions = [];
   for (const row of rows) {
     const label = row[0] || '';
     if (!label) continue;
@@ -140,13 +170,51 @@ function parseFinTable(html) {
 
     const key = metricKey(label);
     if (!key) continue;
+    /* Ключ занят другой строкой — не затираем. Именно молчаливая
+       подмена одной строки другой и стоила нам CAPEX: сумма уступала
+       место проценту. Если это случится снова, в логе робота будет
+       видно, какие две строки столкнулись. */
+    if (metrics[key]) {
+      if (metrics[key].label !== label) {
+        collisions.push(`${key}: «${metrics[key].label}» ← «${label}»`);
+      }
+      continue;
+    }
     metrics[key] = {
       label: label.replace(/\s*\([^)]*\)\s*/g, '').trim(),
       values,
     };
+    if (ltmAt != null) {
+      const lv = parseNum(row[ltmAt]);
+      if (lv != null) ltm[key] = round2(lv);
+    }
   }
 
   if (Object.keys(metrics).length < 5) return null;
+
+  /* ── Ноли, которые не ноли ──
+     За год, по которому у компании нет отчётности, источник подставляет
+     ноль. У Лукойла за 2022 год балансовая стоимость 0.00, чистый долг
+     0.00 и производительность труда 0.00 — при том, что строки «Долг» и
+     «Наличность» за этот год ПУСТЫЕ, то есть ноль посчитан из пустоты.
+     Показать «0,0 млрд ₽» вместо прочерка — значит соврать, а в 2022 году
+     у Лукойла был не ноль, а чистый долг около нуля со знаком минус.
+
+     Поэтому для «пустого» года ноли считаем отсутствием данных. Пустым
+     считаем год, в котором нет почти ни одной основной строки: выручки,
+     EBITDA, активов, чистых активов, операционной и чистой прибыли.
+     Настоящие нули при этом не теряются: год без отчётности не бывает
+     годом с нулевой выручкой у работающей компании, а рыночные данные
+     (капитализация, число акций) в такой год всё равно не ноли. */
+  const CORE = ['revenue', 'ebitda', 'assets', 'netAssets', 'opProfit', 'netProfit'];
+  let zerosDropped = 0;
+  for (const y of yearList) {
+    const present = CORE.filter(k => metrics[k]?.values[y] != null).length;
+    if (present >= 2) continue;
+    for (const metric of Object.values(metrics)) {
+      if (metric.values[y] === 0) { delete metric.values[y]; zerosDropped++; }
+    }
+  }
 
   /* Даты отчёта по годам — для подписи в интерфейсе. */
   const reportDates = yearList.map(y => {
@@ -154,7 +222,93 @@ function parseFinTable(html) {
     return dateAt[idx] || null;
   });
 
-  return { years: yearList, reportDates, metrics };
+  return { years: yearList, reportDates, metrics, ltm, collisions, zerosDropped };
+}
+
+/**
+ * Квартальная (промежуточная) таблица — те же показатели, но по периодам.
+ *
+ * Устроена как годовая: подпись периода на клетку ЛЕВЕЕ значения.
+ * Проверено по датам отчётов: у Лукойла значение 1 908 стоит под подписью
+ * «2025Q2», а рядом дата 29.08.2025 — это отчёт за первое полугодие 2025.
+ * Следующее значение 1 860 под подписью «2025Q4» и дата 20.03.2026 — отчёт
+ * за весь 2025 год. Сходятся все три, поэтому правило верное.
+ *
+ * ВАЖНО про подпись: «2025Q2» — это ПОСЛЕДНИЙ квартал периода, а не всегда
+ * квартал. Лукойл отчитывается раз в полугодие, и у него «2025Q2» значит
+ * полгода. Поэтому подпись показываем как есть и рядом дату публикации,
+ * а не додумываем «за квартал»: иначе получилось бы, что полугодовая
+ * выручка — это квартальная.
+ */
+function parseQuarterTable(html) {
+  const rows = tableRows(html);
+  if (rows.length < 6) return null;
+
+  /* ── Карта «индекс столбца данных → подпись периода» ── */
+  let labelAt = null;         // { [индексДанных]: '2025Q2' }
+  let periodList = [];
+  for (const row of rows) {
+    const found = [];
+    for (let i = 1; i < row.length; i++) {
+      const v = (row[i] || '').trim();
+      if (/^20\d\dQ[1-4]$/.test(v)) found.push({ idx: i, label: v });
+    }
+    if (found.length >= 2) {
+      labelAt = {};
+      periodList = [];
+      for (const { idx, label } of found) {
+        labelAt[idx + 1] = label;
+        periodList.push(label);
+      }
+      break;
+    }
+  }
+  if (!labelAt || periodList.length < 2) return null;
+
+  /* Дата публикации отчёта — она выровнена со значениями напрямую. */
+  const dateAt = {};
+  for (const row of rows) {
+    if (/дата отчета/i.test(row[0] || '')) {
+      for (let i = 1; i < row.length; i++) {
+        const v = (row[i] || '').trim();
+        if (/^\d{2}\.\d{2}\.\d{4}$/.test(v)) dateAt[i] = v;
+      }
+      break;
+    }
+  }
+
+  const metrics = {};
+  for (const row of rows) {
+    const label = row[0] || '';
+    if (!label) continue;
+    if (/^(Годовые|Квартальные|Валюта|Дата отчета|Финансовый отчет|Скачать)/i.test(label)) continue;
+
+    const values = {};
+    for (let i = 1; i < row.length; i++) {
+      const period = labelAt[i];
+      if (!period) continue;
+      const num = parseNum(row[i]);
+      if (num != null) values[period] = round2(num);
+    }
+    if (Object.keys(values).length === 0) continue;
+
+    const key = metricKey(label);
+    /* Периоды держим узким набором. Годовая таблица — это история, и там
+       широта полезна; а здесь важно «что сейчас», и сорок пять показателей
+       по пяти периодам на 213 компаний раздували файл почти вдвое ради
+       строк, которых в карточке всё равно нет. Подписи строк тоже не
+       храним: их даёт интерфейс, а в данных они дублировались 213 раз. */
+    if (!key || metrics[key] || !PERIOD_METRICS.has(key)) continue;
+    metrics[key] = { values };
+  }
+  if (Object.keys(metrics).length < 2) return null;
+
+  const periods = periodList.map(p => {
+    const idx = Object.keys(labelAt).find(k => labelAt[k] === p);
+    return { label: p, date: dateAt[idx] || null };
+  });
+
+  return { periods, metrics };
 }
 
 /** Приводит название метрики к каноническому ключу для UI.
@@ -167,6 +321,7 @@ function parseFinTable(html) {
 function metricKey(label) {
   const l = label.toLowerCase().trim();
   const млрд = /млрд/.test(l);
+  const процент = /%/.test(l);
 
   /* «н/с» = «нескорректированная» — это видно по ссылке в самой таблице:
      она ведёт на smart-lab.ru/finansoviy-slovar/Чистая прибыль
@@ -183,14 +338,48 @@ function metricKey(label) {
   if (/^чистые активы/i.test(l)) return 'netAssets';
   if (/^активы/i.test(l)) return 'assets';
   if (/^чистый долг/i.test(l)) return 'netDebt';
-  if (/^долг\b/i.test(l)) return 'debt';
+  /* «Долг/EBITDA» — это коэффициент, и проверять его надо РАНЬШЕ общего
+     долга, иначе он попадает под правило «Долг» и коэффициент теряется.
+     Ровно это и случилось, когда правило долга починили: строка «Долг»
+     начала находиться, а «Долг/EBITDA» — пропадать. Ловушка видна в
+     отчёте робота как столкновение строк. */
+  if (/долг\s*\/\s*ebitda/i.test(l)) return 'debtEbitda';
+  /* Здесь было /^долг\b/ — и не срабатывало НИКОГДА. В JavaScript
+     \b определяется через \w, а \w — это только латиница и цифры,
+     поэтому границы слова вокруг кириллицы не существует. Из-за
+     этого строка «Долг» (общий долг, 318 млрд ₽ у Лукойла) целиком
+     выпадала из данных, а в карточке стоял прочерк. Проверяем
+     следующим символом, а не границей слова. Наклонную черту тоже
+     исключаем: «Долг/EBITDA» обрабатывается строкой выше. */
+  if (/^долг(?![а-яёa-z/])/i.test(l)) return 'debt';
   if (/наличность/i.test(l)) return 'cash';
   if (/опер\.?\s*денежный/i.test(l)) return 'opFcf';
-  if (/^capex/i.test(l)) return 'capex';
+  if (/^опер\.?\s*расходы/i.test(l)) return 'opEx';
+
+  /* ── Почему проценты проверяем РАНЬШЕ абсолютных значений ──
+     «CAPEX , млрд руб» и «CAPEX/Выручка , %» начинаются одинаково.
+     Раньше обе уходили в один ключ capex, и вторая затирала первую:
+     в карточке Лукойла CAPEX показывался как 9 «млрд ₽», хотя это
+     9 % выручки, а сам CAPEX 782 млрд ₽ пропадал совсем. Правило
+     простое: если у строки есть «%», это коэффициент, а не сумма. */
+  if (/^capex/i.test(l) && процент) return 'capexRevenue';
+  if (/^capex/i.test(l) && млрд) return 'capex';
+  if (/^fcf\b/i.test(l) && процент) return 'fcfToEbitda';
   if (/^fcf\b/i.test(l) && млрд) return 'fcf';
-  if (/^дивиденд.*руб/i.test(l)) return 'divPerShare';
+  if (/^fcf.*акци/i.test(l)) return 'fcfPerShare';
+  if (/доходность\s*fcf/i.test(l)) return 'fcfYield';
+  if (/fcf.*ebitda/i.test(l)) return 'fcfToEbitda';
+
+  /* Дивиденды: «Див доход, ао, %» — доходность к цене акции, а
+     «Дивиденды/прибыль, %» — какая доля прибыли ушла на выплаты.
+     Обе строки содержат и «дивиденд», и «%», поэтому раньше обе
+     уходили в divYield: вторая затирала первую, и доходность к цене
+     из отчётности исчезала. */
+  if (/дивиденд.*руб/i.test(l)) return 'divPerShare';
   if (/див\.?\s*выплата/i.test(l)) return 'divPayment';
-  if (/див\s*доход/i.test(l) || (/дивиденд/i.test(l) && /%/.test(l))) return 'divYield';
+  if (/див\s*доход/i.test(l)) return 'divYield';
+  if (/^дивиденды?\s*\/\s*прибыль/i.test(l) && процент) return 'payoutRatio';
+
   if (/капитализация/i.test(l)) return 'cap';
   if (/^ev\/ebitda/i.test(l)) return 'evEbitda';
   if (/долг[/]ebitda/i.test(l)) return 'debtEbitda';
@@ -205,6 +394,19 @@ function metricKey(label) {
   if (/^p\/fcf/i.test(l)) return 'pfcf';
   if (/^p\/s/i.test(l)) return 'ps';
   if (/^p\/bv/i.test(l)) return 'pbv';
+
+  /* ── Остальное, что есть в таблице и раньше пропадало ── */
+  if (/^баланс\s*стоимость/i.test(l)) return 'bookValue';
+  if (/^число\s*акций/i.test(l)) return 'shares';
+  if (/^free\s*float/i.test(l)) return 'freeFloat';
+  if (/^расх.*персонал/i.test(l)) return 'staffCost';
+  if (/^персонал/i.test(l)) return 'employees';
+  if (/произв\.?\s*труда/i.test(l)) return 'productivity';
+  if (/расходы\s*\/\s*чел/i.test(l)) return 'costPerEmployee';
+  if (/^r\s*&\s*d/i.test(l)) return 'rdCapex';
+  if (/^добыча нефти/i.test(l)) return 'oilProduction';
+  if (/^переработка нефти/i.test(l)) return 'oilRefining';
+  if (/^добыча газа/i.test(l)) return 'gasProduction';
   return null;   // незнакомое — не выдумываем ключ
 }
 
@@ -324,7 +526,8 @@ async function main() {
   if (tickers.length < MIN_TICKERS) { log(`Слишком мало: ${tickers.length}`); process.exit(1); }
 
   const result = { generatedAt: new Date().toISOString(), source: 'smart-lab.ru', tickers: {} };
-  let done = 0, err = 0, withFin = 0, withDiv = 0;
+  let done = 0, err = 0, withFin = 0, withDiv = 0, withQ = 0;
+  const allCollisions = [];
 
   for (const t of tickers) {
     // 1. МСФО-страница
@@ -337,26 +540,44 @@ async function main() {
     const div = divHtml ? parseDividends(divHtml) : null;
     await sleep(PAGE_DELAY_MS);
 
-    if (fin || div) {
-      result.tickers[t.secid] = { n: t.shortname, fin, div };
+    // 3. Промежуточная отчётность: последние периоды, а не только годы
+    const qHtml = await fetch('https://smart-lab.ru/q/' + t.secid + '/f/q/');
+    const q = qHtml ? parseQuarterTable(qHtml) : null;
+    await sleep(PAGE_DELAY_MS);
+
+    if (fin || div || q) {
+      result.tickers[t.secid] = { n: t.shortname, fin, q, div };
       if (fin) withFin++;
       if (div) withDiv++;
+      if (q) withQ++;
+      /* Столкновение строк — это сигнал, что правило разбора надо
+         уточнить: две разные строки таблицы претендуют на один ключ. */
+      if (fin?.collisions?.length) {
+        allCollisions.push(`${t.secid} · ${fin.collisions.join(' | ')}`);
+      }
     }
     done++;
     /* Логируем каждый тикер, а не каждый десятый. Робот идёт ~25 минут,
        и когда он замолкал, понять «работает или встал» было нельзя.
        Строк всего 262 — это дешевле, чем гадать по молчанию. */
     log(`${String(done).padStart(3)}/${tickers.length} · ${t.secid.padEnd(7)} · `
-      + `${fin ? 'МСФО' : '—'} · ${div ? 'дивы' : '—'} · всего МСФО ${withFin}, див ${withDiv}`);
+      + `${fin ? 'МСФО' : '—'} · ${q ? 'периоды' : '—'} · ${div ? 'дивы' : '—'} · `
+      + `всего МСФО ${withFin}, периодов ${withQ}, див ${withDiv}`);
   }
 
   result.stats = {
     total: tickers.length,
     processed: done,
     withFinance: withFin,
+    withPeriods: withQ,
     withDividends: withDiv,
     errors: err,
+    collisions: allCollisions.length,
   };
+  if (allCollisions.length) {
+    log(`Столкновений строк: ${allCollisions.length}. Первые 15:`);
+    allCollisions.slice(0, 15).forEach(c => log('  ' + c));
+  }
 
   writeFileSync(OUT, JSON.stringify(result, null, 1));
   log(`Готово: ${withFin} с МСФО, ${withDiv} с дивидендами · ${OUT}`);
@@ -372,4 +593,4 @@ if (invokedDirectly) {
   main().catch(e => { log('КРИТИЧЕСКАЯ ОШИБКА:', e.message); process.exit(1); });
 }
 
-export { parseFinTable, parseDividends, parseNum, metricKey };
+export { parseFinTable, parseQuarterTable, parseDividends, parseNum, metricKey };

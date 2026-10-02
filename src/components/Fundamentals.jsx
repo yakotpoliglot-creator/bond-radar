@@ -18,7 +18,10 @@ import { Panel } from './ui';
    означают разное. Поэтому подписано прямо в блоке.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Строки таблицы: [ключ, подпись, единица, знаков после запятой] */
+/* Строки таблицы: [ключ, подпись, единица, знаков после запятой, делитель]
+   Делитель нужен там, где в отчёте число в одних единицах, а читать его
+   удобнее в других: сотрудников показываем в тысячах, а не «104 323 чел.».
+   Незнакомый показатель не выдумываем — строки просто не будет. */
 const GROUPS = [
   {
     title: 'Финансовые результаты',
@@ -26,12 +29,19 @@ const GROUPS = [
       ['revenue', 'Выручка', 'млрд ₽', 1],
       ['opProfit', 'Операционная прибыль', 'млрд ₽', 1],
       ['ebitda', 'EBITDA', 'млрд ₽', 1],
+      /* Маржа EBITDA идёт сразу за самой EBITDA: в отчёте это соседние
+         строки, и рядом они читаются как одно предложение. */
+      ['ebitdaMargin', 'Рентабельность по EBITDA', '%', 1],
       ['netProfit', 'Чистая прибыль', 'млрд ₽', 1],
       /* «н/с» = нескорректированная: то, что компания показала в отчёте,
          без поправок на разовые статьи. У Газпрома за 2023 скорректированная
          726 млрд, а в отчёте — убыток 629 млрд. Рынок цитирует вторую,
          поэтому показываем обе и не делаем вид, что цифра одна. */
       ['netProfitNS', 'Чистая прибыль (как в отчёте)', 'млрд ₽', 1],
+      ['netMargin', 'Чистота прибыли (маржа)', '%', 1],
+      ['opEx', 'Операционные расходы', 'млрд ₽', 1],
+      ['amort', 'Амортизация', 'млрд ₽', 1],
+      ['interest', 'Процентные расходы', 'млрд ₽', 1],
     ],
   },
   {
@@ -39,7 +49,8 @@ const GROUPS = [
     rows: [
       ['assets', 'Активы', 'млрд ₽', 1],
       ['netAssets', 'Чистые активы', 'млрд ₽', 1],
-      ['debt', 'Долг', 'млрд ₽', 1],
+      ['bookValue', 'Балансовая стоимость', 'млрд ₽', 1],
+      ['debt', 'Долг (общий)', 'млрд ₽', 1],
       ['cash', 'Наличность', 'млрд ₽', 1],
       ['netDebt', 'Чистый долг', 'млрд ₽', 1],
     ],
@@ -48,8 +59,11 @@ const GROUPS = [
     title: 'Денежный поток',
     rows: [
       ['opFcf', 'Операционный поток', 'млрд ₽', 1],
-      ['capex', 'CAPEX', 'млрд ₽', 1],
+      ['capex', 'CAPEX (вложения)', 'млрд ₽', 1],
+      ['capexRevenue', 'CAPEX к выручке', '%', 1],
       ['fcf', 'Свободный поток (FCF)', 'млрд ₽', 1],
+      ['fcfPerShare', 'FCF на акцию', '₽', 1],
+      ['fcfToEbitda', 'FCF к EBITDA', '%', 1],
     ],
   },
   {
@@ -59,6 +73,28 @@ const GROUPS = [
       ['ev', 'EV (стоимость с долгом)', 'млрд ₽', 1],
       ['eps', 'Прибыль на акцию', '₽', 1],
       ['bv', 'Балансовая стоимость акции', '₽', 1],
+      ['fcfYield', 'Доходность FCF', '%', 1],
+      ['shares', 'Акций', 'млн шт.', 1],
+      ['freeFloat', 'В свободном обращении', '%', 1],
+    ],
+  },
+  {
+    title: 'Компания и персонал',
+    rows: [
+      ['employees', 'Сотрудников', 'тыс. чел.', 1, 1000],
+      ['productivity', 'Выручка на сотрудника', 'млн ₽', 1],
+      ['staffCost', 'Расходы на персонал', 'млрд ₽', 1],
+      ['costPerEmployee', 'Расходы на сотрудника', 'тыс. ₽', 1],
+    ],
+  },
+  {
+    /* Есть только у нефтегазовых: у Северстали или Сбера этих строк
+       в отчёте нет, и группа просто не показывается. */
+    title: 'Добыча и переработка',
+    rows: [
+      ['oilProduction', 'Добыча нефти', 'млн т', 1],
+      ['oilRefining', 'Переработка нефти', 'млн т', 1],
+      ['gasProduction', 'Добыча газа', 'млрд м³', 1],
     ],
   },
 ];
@@ -138,7 +174,7 @@ function fmtVal(v, digits) {
    фраза не появляется вовсе — досочинять нечего.
    Никаких «стоит покупать», «недооценена», «перспективы» тут быть
    не может: это была бы инвестиционная рекомендация. */
-function plainSummary(m, years) {
+function plainSummary(m, years, ltm) {
   if (!m || years.length < 2) return [];
   const first = years[0], last = years[years.length - 1];
   const at = (k, y) => m[k]?.values?.[y] ?? null;
@@ -180,16 +216,32 @@ function plainSummary(m, years) {
   const np = at('netProfit', last);
   if (np != null) out.push(`Чистая прибыль в ${last}: ${mlrd(np)}.`);
 
+  /* Скользящие двенадцать месяцев — самая свежая точка, поэтому в конце
+     и отдельной строкой: она отвечает на «а что сейчас», тогда как всё
+     выше — про то, как менялось по годам. Источник считает её сам. */
+  if (ltm && (ltm.revenue != null || ltm.ebitda != null)) {
+    const parts = [];
+    if (ltm.revenue != null) parts.push(`выручка ${mlrd(ltm.revenue)}`);
+    if (ltm.ebitda != null) parts.push(`EBITDA ${mlrd(ltm.ebitda)}`);
+    if (ltm.netProfit != null) parts.push(`чистая прибыль ${mlrd(ltm.netProfit)}`);
+    out.push(`За последние 12 месяцев (на дату последнего отчёта): ${parts.join(', ')}.`);
+  }
+
   return out;
 }
 
 export default function Fundamentals({ data, right }) {
   const fin = data?.fin;
   const div = data?.div;
-  if (!fin && !div) return null;
+  const q = data?.q;
+  if (!fin && !div && !q) return null;
 
   const years = fin?.years || [];
   const m = fin?.metrics || {};
+
+  /* Столбец «за 12 мес.» показываем только если он заполнен: столбец
+     из одних прочерков только занимает место и путает. */
+  const hasLtm = !!fin?.ltm && Object.keys(fin.ltm).length >= 5;
 
   /* ── Таблица отчётности ── */
   const finTable = fin && years.length > 0 ? (
@@ -213,6 +265,16 @@ export default function Fundamentals({ data, right }) {
                   )}
                 </th>
               ))}
+              {hasLtm && (
+                /* Столбец «за 12 месяцев» — скользящий: не год отчёта,
+                   а последние двенадцать месяцев на дату публикации.
+                   Источник помечает его «LTM ?»: цифра досчитана, а не
+                   взята из отчёта. Так и подписываем. */
+                <th className="nosort" style={{ textAlign: 'right', borderLeft: '1px solid var(--line, #2a2a2a)' }}>
+                  за 12 мес.
+                  <div className="c-3" style={{ fontSize: 9, fontWeight: 400 }}>скользящие</div>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -221,7 +283,7 @@ export default function Fundamentals({ data, right }) {
               const hasAny = g.rows.some(([k]) => m[k]);
               if (!hasAny) return null;
               return (
-                <FragmentRows key={g.title} group={g} m={m} years={years} />
+                <FragmentRows key={g.title} group={g} m={m} years={years} ltm={hasLtm ? fin.ltm : null} />
               );
             })}
           </tbody>
@@ -229,6 +291,10 @@ export default function Fundamentals({ data, right }) {
       </div>
       <div className="c-3" style={{ fontSize: 10.5, marginTop: 10, lineHeight: 1.6 }}>
         Источник: smart-lab.ru (МСФО). Прочерк — показателя нет в отчёте или он не публиковался.
+        За годы без отчётности источник подставляет ноль, и такой ноль мы показываем прочерком,
+        а не нулём рублей: ноль, посчитанный из пустоты, — это не ноль, а отсутствие данных.
+        Столбец <b>«за 12 мес.»</b> — скользящие двенадцать месяцев на дату последнего отчёта:
+        он показывает, как дела сейчас, а не за прошлый год, и источник считает его сам.
         У банков и страховых выручки и EBITDA не бывает по природе их отчётности — там прочерк
         не пробел данных, а особенность учёта.
       </div>
@@ -236,7 +302,7 @@ export default function Fundamentals({ data, right }) {
   ) : null;
 
   /* ── Пересказ цифр ── */
-  const summary = plainSummary(m, years);
+  const summary = plainSummary(m, years, hasLtm ? fin.ltm : null);
   const summaryPanel = summary.length > 0 ? (
     <Panel title="Что видно в цифрах" style={{ marginBottom: 14 }}
       right={<span className="c-3" style={{ fontSize: 10.5 }}>посчитано по таблице выше</span>}>
@@ -371,8 +437,75 @@ export default function Fundamentals({ data, right }) {
     </Panel>
   ) : null;
 
+  /* ── Последние отчётные периоды ────────────────────────────────────
+     Годовая таблица отвечает на вопрос «как менялось по годам», а эта
+     панель — «что происходит сейчас»: свежие кварталы или полугодия
+     с датами публикации. Именно это смотрят первым делом, и именно
+     этого не хватало: по годам последняя точка — прошлый декабрь. */
+  const periodsPanel = q?.periods?.length
+    ? (() => {
+      const last = q.periods.slice(-5);
+      const ROWS = [
+        ['revenue', 'Выручка', 'млрд ₽', 1],
+        ['ebitda', 'EBITDA', 'млрд ₽', 1],
+        ['opProfit', 'Операционная прибыль', 'млрд ₽', 1],
+        ['netProfit', 'Чистая прибыль', 'млрд ₽', 1],
+      ];
+      const rows = ROWS.filter(([k]) => q.metrics?.[k]);
+      if (!rows.length) return null;
+      return (
+        <Panel title="Последние отчётные периоды" style={{ marginBottom: 14 }}
+          right={<span className="c-3" style={{ fontSize: 10.5 }}>МСФО, промежуточная отчётность</span>}>
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th className="nosort" style={{ textAlign: 'left' }}>Показатель</th>
+                  {last.map(p => (
+                    <th key={p.label} className="nosort" style={{ textAlign: 'right' }}>
+                      {p.label}
+                      {p.date && (
+                        <div className="c-3" style={{ fontSize: 9, fontWeight: 400 }}>{p.date}</div>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(([key, label, unit, digits]) => (
+                  <tr key={key}>
+                    <td style={{ textAlign: 'left' }}>
+                      {label} <span className="c-3" style={{ fontSize: 10 }}>{unit}</span>
+                    </td>
+                    {last.map(p => {
+                      const v = q.metrics[key].values[p.label];
+                      return (
+                        <td key={p.label} style={{ textAlign: 'right' }} className="mono">
+                          {v == null ? '—' : nf(v, digits)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="c-3" style={{ fontSize: 10.5, marginTop: 10, lineHeight: 1.6 }}>
+            Подпись периода — <b>как её даёт источник</b>: это последний квартал периода,
+            а не всегда сам квартал. Компания может отчитываться и за квартал, и за полугодие,
+            поэтому «2026Q2» у одной значит три месяца, а у другой — шесть. Мы подпись
+            не переписываем, чтобы не выдать полугодовую выручку за квартальную.
+            Дата под подписью — когда отчёт опубликован. Сравнивать периоды одной компании
+            между собой можно; между разными компаниями — только с этой оговоркой.
+          </div>
+        </Panel>
+      );
+    })()
+    : null;
+
   return (
     <>
+      {periodsPanel}
       {finTable}
       {summaryPanel}
       {ratioCards}
@@ -382,16 +515,16 @@ export default function Fundamentals({ data, right }) {
 }
 
 /** Строки одной группы: заголовок группы + её метрики. */
-function FragmentRows({ group, m, years }) {
+function FragmentRows({ group, m, years, ltm }) {
   return (
     <>
       <tr>
-        <td colSpan={years.length + 1} className="c-3"
+        <td colSpan={years.length + 1 + (ltm ? 1 : 0)} className="c-3"
           style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.4px', paddingTop: 12 }}>
           {group.title}
         </td>
       </tr>
-      {group.rows.map(([key, label, unit, digits]) => {
+      {group.rows.map(([key, label, unit, digits, scale]) => {
         const metric = m[key];
         if (!metric) return null;
         return (
@@ -405,10 +538,15 @@ function FragmentRows({ group, m, years }) {
               const neg = key === 'netDebt' && v != null && v < 0;
               return (
                 <td key={y} style={{ textAlign: 'right' }} className={'mono ' + (neg ? 'c-g' : '')}>
-                  {v == null ? '—' : fmtVal(v, digits)}
+                  {v == null ? '—' : fmtVal(scale ? v / scale : v, digits)}
                 </td>
               );
             })}
+            {ltm && (
+              <td style={{ textAlign: 'right', borderLeft: '1px solid var(--line, #2a2a2a)' }} className="mono">
+                {ltm[key] == null ? '—' : fmtVal(scale ? ltm[key] / scale : ltm[key], digits)}
+              </td>
+            )}
           </tr>
         );
       })}

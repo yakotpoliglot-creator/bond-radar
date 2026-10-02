@@ -17,7 +17,7 @@
  * Скрипт заодно проверяет, что годы не дублируются и идут по возрастанию:
  * именно дубли выдавали сбой столбцов.
  */
-import { parseFinTable, parseDividends } from './fundamentals.mjs';
+import { parseFinTable, parseQuarterTable, parseDividends } from './fundamentals.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +38,29 @@ const get = async u => {
 };
 
 const CHECKS = {
-  LKOH: { revenue: { 2021: 9431 }, ebitda: { 2025: 892.1 }, netProfit: { 2021: 773.4, 2023: 1155 } },
+  LKOH: {
+    revenue: { 2021: 9431 },
+    ebitda: { 2025: 892.1 },
+    netProfit: { 2021: 773.4, 2023: 1155 },
+    /* ── Проверки на конкретные найденные ошибки ──
+       Под ключом capex раньше лежал ПРОЦЕНТ от выручки (5, 9, 18, 21),
+       а сам CAPEX пропадал: обе строки начинались с «CAPEX» и уходили
+       в один ключ, вторая затирала первую. Теперь это разные ключи,
+       и оба значения — настоящие: Лукойл в 2023 вложил 720 млрд ₽,
+       а это 9 % выручки. Если однажды capex снова станет маленьким
+       числом, проверка это поймает. */
+    capex: { 2023: 720, 2025: 774.6 },
+    capexRevenue: { 2023: 9, 2025: 21 },
+    /* Строка «Долг» не находилась вообще: правило было записано через \b,
+       а \b не работает с кириллицей. Общий долг Лукойла: 758 → 318 млрд. */
+    debt: { 2021: 758, 2023: 396, 2025: 318 },
+    /* Доходность к цене и доля от прибыли — разные вещи; раньше обе
+       уходили в divYield, и вторая затирала первую. */
+    divYield: { 2023: 14 },
+    payoutRatio: { 2023: 55 },
+    shares: { 2021: 650.3 },
+    employees: { 2023: 104172 },
+  },
   GAZP: {
     revenue: { 2021: 10241, 2022: 11674, 2023: 8542 },
     /* Основная строка — скорректированная прибыль; «н/с» — как в отчёте. */
@@ -48,6 +70,14 @@ const CHECKS = {
   SBER: { netProfit: { 2021: 1251, 2022: 270.5, 2023: 1509, 2024: 1582, 2025: 1707 } },
   ROSN: { revenue: { 2021: 8761, 2022: 9049, 2023: 9163, 2024: 10139 } },
   SNGS: {},
+};
+
+/* Скользящие двенадцать месяцев лежат в той же таблице, поэтому за ними
+   отдельно ходить не нужно. Проверяем, что столбец найден и что в нём
+   настоящие цифры, а не значение последнего года. */
+const LTM_CHECKS = {
+  LKOH: { revenue: 3919, ebitda: 1286 },
+  GAZP: { revenue: 10083 },
 };
 
 let bad = 0;
@@ -71,6 +101,35 @@ for (const [tk, expect] of Object.entries(CHECKS)) {
     }
   }
   console.log(`  все ключи: ${Object.keys(p.metrics).join(', ')}`);
+
+  const wantLtm = LTM_CHECKS[tk];
+  if (wantLtm) {
+    for (const [key, want] of Object.entries(wantLtm)) {
+      const have = p.ltm?.[key];
+      const ok = have != null && Math.abs(have - want) < 1.1;
+      if (!ok) bad++;
+      console.log(`  ${ok ? '✓' : '✗'} за 12 мес. ${key}: ожидали ${want}, получили ${have ?? '—'}`);
+    }
+  }
+}
+
+/* ── Промежуточная отчётность ────────────────────────────────────────
+   Конкретные цифры здесь проверять нельзя — они меняются каждый квартал.
+   Проверяем устройство: периоды разобрались, у части есть даты, и
+   выручка есть больше чем за пару периодов. Если правило столбцов
+   однажды собьётся, периоды либо исчезнут, либо станут пустыми. */
+console.log('\n── промежуточная отчётность ──');
+for (const tk of ['CHMF', 'LKOH']) {
+  await sleep(1500);
+  const q = parseQuarterTable(await get(`https://smart-lab.ru/q/${tk}/f/q/`));
+  if (!q) { console.log(`  ✗ ${tk}: периоды не разобраны`); bad++; continue; }
+  const dated = q.periods.filter(p => p.date).length;
+  const rev = q.metrics.revenue ? Object.keys(q.metrics.revenue.values).length : 0;
+  const ok = q.periods.length >= 3 && dated >= 2 && rev >= 3;
+  if (!ok) bad++;
+  const lastP = q.periods[q.periods.length - 1];
+  console.log(`  ${ok ? '✓' : '✗'} ${tk}: периодов ${q.periods.length}, с датами ${dated}, `
+    + `выручка за ${rev} периодов, последний ${lastP.label} ${lastP.date || '(дата не указана)'}`);
 }
 
 /* ── Дивиденды ────────────────────────────────────────────────────────
@@ -145,6 +204,18 @@ if (!existsSync(FILE)) {
   bad += report('тикеры с дублями годов', dupYears);
   bad += report('тикеры без данных вообще', emptyFin);
   bad += report('старая структура дивидендов', badDiv);
+
+  /* Новые пласты: скользящие 12 месяцев и промежуточные периоды.
+     Если они вдруг исчезнут у большинства компаний, значит сломался
+     сбор, а не источник — источник отдаёт их почти всем. */
+  const withLtm = ticks.filter(tk => {
+    const l = d.tickers[tk].fin?.ltm;
+    return l && Object.keys(l).length >= 5;
+  }).length;
+  const withQ = ticks.filter(tk => d.tickers[tk].q?.periods?.length).length;
+  console.log(`  ${withLtm >= ticks.length * 0.7 ? '✓' : '✗'} с показателями за 12 мес.: ${withLtm} из ${ticks.length}`);
+  console.log(`  ${withQ >= ticks.length * 0.7 ? '✓' : '✗'} с промежуточными периодами: ${withQ} из ${ticks.length}`);
+  if (withLtm < ticks.length * 0.7 || withQ < ticks.length * 0.7) bad++;
 
   /* Лукойл как ориентир: годы по возрастанию, дивиденды на месте. */
   const l = d.tickers?.LKOH;
