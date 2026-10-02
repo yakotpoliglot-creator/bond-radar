@@ -131,6 +131,58 @@ function fmtVal(v, digits) {
   return nf(v, digits);
 }
 
+/* ── Пересказ цифр простыми словами ─────────────────────────────────
+   Это НЕ редакционный разбор и не мнение о компании. Каждое предложение
+   здесь — арифметика по той же таблице, что выше: сравнили первый и
+   последний год, поделили одно на другое. Если данных для фразы нет,
+   фраза не появляется вовсе — досочинять нечего.
+   Никаких «стоит покупать», «недооценена», «перспективы» тут быть
+   не может: это была бы инвестиционная рекомендация. */
+function plainSummary(m, years) {
+  if (!m || years.length < 2) return [];
+  const first = years[0], last = years[years.length - 1];
+  const at = (k, y) => m[k]?.values?.[y] ?? null;
+  const mlrd = v => nf(v, 1) + ' млрд ₽';
+  const pct = v => (v > 0 ? '+' : '') + nf(v, 1) + '%';
+  const out = [];
+
+  const rv1 = at('revenue', first), rv2 = at('revenue', last);
+  if (rv1 > 0 && rv2 != null) {
+    out.push(`Выручка за ${first}–${last}: ${mlrd(rv1)} → ${mlrd(rv2)} (${pct((rv2 - rv1) / rv1 * 100)}).`);
+  }
+
+  const eb1 = at('ebitda', first), eb2 = at('ebitda', last);
+  const mg1 = at('ebitdaMargin', first), mg2 = at('ebitdaMargin', last);
+  if (eb1 != null && eb2 != null) {
+    let s = `EBITDA: ${mlrd(eb1)} → ${mlrd(eb2)}`;
+    if (mg1 != null && mg2 != null) s += `, рентабельность ${nf(mg1, 1)}% → ${nf(mg2, 1)}%`;
+    out.push(s + '.');
+  }
+
+  const nd = at('netDebt', last), de = at('debtEbitda', last);
+  if (nd != null && eb2 != null && eb2 > 0) {
+    if (nd < 0) {
+      out.push(`Чистого долга нет: наличности больше долга на ${mlrd(Math.abs(nd))}.`);
+    } else {
+      let s = `Чистый долг ${mlrd(nd)}`;
+      if (de != null) s += ` — ${nf(de, 2)} годовой EBITDA`;
+      out.push(s + '.');
+    }
+  }
+
+  const fcf = at('fcf', last);
+  if (fcf != null) {
+    out.push(fcf < 0
+      ? `Свободный поток в ${last} отрицательный: ${mlrd(fcf)}.`
+      : `Свободный поток в ${last}: ${mlrd(fcf)}.`);
+  }
+
+  const np = at('netProfit', last);
+  if (np != null) out.push(`Чистая прибыль в ${last}: ${mlrd(np)}.`);
+
+  return out;
+}
+
 export default function Fundamentals({ data, right }) {
   const fin = data?.fin;
   const div = data?.div;
@@ -179,6 +231,22 @@ export default function Fundamentals({ data, right }) {
         Источник: smart-lab.ru (МСФО). Прочерк — показателя нет в отчёте или он не публиковался.
         У банков и страховых выручки и EBITDA не бывает по природе их отчётности — там прочерк
         не пробел данных, а особенность учёта.
+      </div>
+    </Panel>
+  ) : null;
+
+  /* ── Пересказ цифр ── */
+  const summary = plainSummary(m, years);
+  const summaryPanel = summary.length > 0 ? (
+    <Panel title="Что видно в цифрах" style={{ marginBottom: 14 }}
+      right={<span className="c-3" style={{ fontSize: 10.5 }}>посчитано по таблице выше</span>}>
+      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.85 }}>
+        {summary.map((s, i) => <li key={i}>{s}</li>)}
+      </ul>
+      <div className="c-3" style={{ fontSize: 10.5, marginTop: 10, lineHeight: 1.6 }}>
+        Это пересказ чисел из отчётности, а не мнение о компании и не совет.
+        Никаких «дешево», «перспективно» или «стоит брать» здесь нет намеренно —
+        таких выводов мы не делаем.
       </div>
     </Panel>
   ) : null;
@@ -234,7 +302,19 @@ export default function Fundamentals({ data, right }) {
     </Panel>
   ) : null;
 
-  /* ── Дивиденды ── */
+  /* ── Дивиденды ──
+     Годы идут по убыванию (свежие сверху), а «изм. к пред.» считаем по
+     хронологии — то есть сравниваем с годом РАНЬШЕ, а не со строкой ниже. */
+  const divYears = Object.keys(div?.perShare || {}).sort();
+  const divChange = {};
+  for (let i = 1; i < divYears.length; i++) {
+    const cur = div.perShare[divYears[i]];
+    const prev = div.perShare[divYears[i - 1]];
+    /* Ноль — это не «мало», а «не начисляли или ещё не объявили»:
+       источник эти случаи не различает, поэтому процент не считаем. */
+    divChange[divYears[i]] = (cur > 0 && prev > 0) ? (cur - prev) / prev * 100 : null;
+  }
+
   const divTable = div && Object.keys(div.perShare || {}).length > 0 ? (
     <Panel title="Дивиденды по годам" style={{ marginBottom: 14 }}
       right={<span className="c-3" style={{ fontSize: 10.5 }}>source: smart-lab.ru</span>}>
@@ -244,35 +324,49 @@ export default function Fundamentals({ data, right }) {
             <tr>
               <th className="nosort" style={{ textAlign: 'left' }}>Год</th>
               <th className="nosort" style={{ textAlign: 'right' }}>Дивиденд, ₽/акцию</th>
+              <th className="nosort" style={{ textAlign: 'right' }}>Изм. к пред. году</th>
               <th className="nosort" style={{ textAlign: 'right' }}>Див. доходность</th>
               <th className="nosort" style={{ textAlign: 'right' }}>Доля от прибыли</th>
-              <th className="nosort" style={{ textAlign: 'right' }}>Всего выплачено</th>
+              <th className="nosort" style={{ textAlign: 'right' }}>Всего начислено</th>
             </tr>
           </thead>
           <tbody>
-            {Object.keys(div.perShare).sort().reverse().map(y => (
-              <tr key={y}>
-                <td>{y}</td>
-                <td style={{ textAlign: 'right' }} className="mono">{nf(div.perShare[y], 1)}</td>
-                <td style={{ textAlign: 'right' }} className="mono">
-                  {div.divYield?.[y] != null ? nf(div.divYield[y], 1) + '%' : '—'}
-                </td>
-                <td style={{ textAlign: 'right' }} className="mono">
-                  {div.payoutRatio?.[y] != null ? nf(div.payoutRatio[y], 0) + '%' : '—'}
-                </td>
-                <td style={{ textAlign: 'right' }} className="mono">
-                  {div.divPayment?.[y] != null ? nf(div.divPayment[y], 1) + ' млрд' : '—'}
-                </td>
-              </tr>
-            ))}
+            {[...divYears].reverse().map(y => {
+              const ps = div.perShare[y];
+              const ch = divChange[y];
+              return (
+                <tr key={y}>
+                  <td>{y}</td>
+                  <td style={{ textAlign: 'right' }} className="mono">{ps > 0 ? nf(ps, 2) : '—'}</td>
+                  <td style={{ textAlign: 'right' }}
+                    className={'mono ' + (ch == null ? 'c-3' : ch > 0 ? 'c-g' : 'c-r')}>
+                    {ch == null ? '—' : (ch > 0 ? '+' : '') + nf(ch, 1) + '%'}
+                  </td>
+                  <td style={{ textAlign: 'right' }} className="mono">
+                    {div.divYield?.[y] != null ? nf(div.divYield[y], 1) + '%' : '—'}
+                  </td>
+                  <td style={{ textAlign: 'right' }} className="mono">
+                    {div.payoutRatio?.[y] != null ? nf(div.payoutRatio[y], 0) + '%' : '—'}
+                  </td>
+                  <td style={{ textAlign: 'right' }} className="mono">
+                    {div.divPayment?.[y] != null ? nf(div.divPayment[y], 1) + ' млрд' : '—'}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
       <div className="c-3" style={{ fontSize: 10.5, marginTop: 10, lineHeight: 1.6 }}>
         Суммы — за год, за который дивиденд <b>начислен</b>, а не за год выплаты.
+        Поэтому наши цифры могут не совпадать с теми, где дивиденды сгруппированы
+        по году выплаты: например, дивиденд за 2023 год, перечисленный в 2024-м,
+        у нас стоит в 2023-м. Обе цифры верны — вопрос разный.
         «Див. доходность» — выплата к цене акции на тот момент, а не к сегодняшней.
         «Доля от прибыли» — сколько из прибыли ушло на дивиденды: больше 100 % значит
-        платили из накопленного. Прошлые выплаты не гарантируют будущих.
+        платили из накопленного. <b>Прочерк</b> — за этот год выплата не начислена
+        или ещё не объявлена; источник эти случаи не различает.
+        Прошлые выплаты не гарантируют будущих.
       </div>
     </Panel>
   ) : null;
@@ -280,6 +374,7 @@ export default function Fundamentals({ data, right }) {
   return (
     <>
       {finTable}
+      {summaryPanel}
       {ratioCards}
       {divTable}
     </>
