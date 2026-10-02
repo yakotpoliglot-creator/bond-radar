@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { fetchBonds, COLLECTIONS, COUPON_LABEL, daysUntil } from '../api/moex';
+import { fetchBonds, fetchRatings, COLLECTIONS, COUPON_LABEL, daysUntil } from '../api/moex';
 import { BondTable, Pager, Loading, ErrorBox, Panel, Kpi, RATING_HINT } from '../components/ui';
-import { nf } from '../lib/format';
+import { nf, dateTime } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -298,6 +298,13 @@ export default function Screener() {
      Заполняем поле один раз на каждый новый q — дальше пользователь
      правит его сам, и перебивать его ввод нельзя. */
   const qParam = new URLSearchParams(loc.search).get('q');
+
+  /* ── когда собраны рейтинги ──────────────────────────────────────
+     Рейтинги приходят файлом от робота, а не с биржи. Дату сбора
+     показываем прямо на странице: если робот однажды перестанет
+     обновлять данные, это будет видно, а не останется незамеченным. */
+  const [ratingInfo, setRatingInfo] = useState(null);
+  useEffect(() => { fetchRatings().then(setRatingInfo); }, []);
 
   /* ── фильтрация ── */
   const { rows, hiddenAnomaly } = useMemo(() => {
@@ -683,6 +690,20 @@ export default function Screener() {
           </>
         )}
       </Panel>
+
+      {/* Источник и дата сбора. Это единственное место, где видно, что
+          робот рейтингов жив: молчаливо устаревшие данные заметить иначе
+          нечем, а «обновляется само» без проверки — это обещание, а не факт. */}
+      {ratingInfo?.generatedAt && (
+        <div className="c-3 rating-src" style={{ fontSize: 11, marginTop: 10, lineHeight: 1.6 }}>
+          Кредитные рейтинги — по данным таблицы котировок{' '}
+          <a href="https://smart-lab.ru/q/bonds/" target="_blank" rel="noopener noreferrer">smart-lab.ru</a>,
+          собраны {dateTime(ratingInfo.generatedAt)}
+          {ratingInfo.stats?.withRating ? ` · значений: ${ratingInfo.stats.withRating}` : ''}.
+          Агентство и дата присвоения в источнике не указаны, рейтинг относится к эмитенту.
+          Котировки, доходности и карточки выпусков грузятся с Московской биржи при каждом открытии страницы.
+        </div>
+      )}
     </div>
   );
 }

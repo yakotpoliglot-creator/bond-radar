@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, girboUrl, bondsOfIssuer, fetchIssuerProfile, COUPON_LABEL, moexReportsUrl } from '../api/moex';
+import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboDate, girboUrl, bondsOfIssuer, fetchIssuerProfile, COUPON_LABEL, moexReportsUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox } from '../components/ui';
-import { nf, money, dateShort } from '../lib/format';
+import { nf, money, dateShort, dateTime } from '../lib/format';
 
 /* ═══════════════════════════════════════════════════════════════════
    Страница эмитента — /issuer/:key.
@@ -17,6 +17,9 @@ export default function Issuer() {
   const [info, setInfo] = useState(null);
   const [emitter, setEmitter] = useState(null);
   const [girbo, setGirbo] = useState(null);
+  /* Дата сбора файла отчётности: видно, не устарел ли он — робот ходит в
+     ФНС раз в неделю. */
+  const [girboDate, setGirboDate] = useState(null);
   const [passport, setPassport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -88,6 +91,12 @@ export default function Issuer() {
     fetchGirboByInn(inn).then(r => { if (alive) setGirbo(r); }).catch(() => {});
     return () => { alive = false; };
   }, [emitter?.inn, info?.inn]);
+
+  useEffect(() => {
+    let alive = true;
+    fetchGirboDate().then(d => { if (alive) setGirboDate(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   /* ── доступные типы купона для фильтра ─────────────────────────── */
   const kinds = useMemo(() => {
@@ -373,7 +382,7 @@ export default function Issuer() {
         <Panel
           title="Бухгалтерская отчётность"
           style={{ marginTop: 14 }}
-          right={<span className="c-3" style={{ fontSize: 11 }}>ГИР БО ФНС · тыс. → ₽</span>}
+          right={<span className="c-3" style={{ fontSize: 11 }}>ГИР БО ФНС · тыс. → ₽{girboDate ? ` · данные от ${dateTime(girboDate)}` : ''}</span>}
         >
           <div className="tbl-wrap">
             <table className="tbl">

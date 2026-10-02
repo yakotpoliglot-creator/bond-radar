@@ -36,6 +36,22 @@ export function dateShort(d) {
   return `${+day} ${MONTHS[+m - 1]} ${y}`;
 }
 
+/**
+ * Полная отметка времени от роботов: 2026-10-01T12:17:11.237Z → 01.10.2026 12:17 UTC.
+ *
+ * Отдельная функция нужна потому, что date() рассчитан на короткую дату
+ * «2026-10-01» и разбирает строку по дефису. На полной отметке он выдавал
+ * «01T12:17:11.237Z.10.2026» — это я увидел на живой странице, а не
+ * предположил. Здесь время отрезается до вызова date().
+ */
+export function dateTime(v) {
+  if (!v) return '—';
+  const s = String(v);
+  const [d, t] = s.split('T');
+  const day = date(d);
+  return t ? `${day} ${t.slice(0, 5)} UTC` : day;
+}
+
 /** Дней → «4 мес.» / «1,4 года» */
 export function duration(days) {
   if (days == null) return '—';

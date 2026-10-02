@@ -495,6 +495,9 @@ export async function fetchBondCard(secidOrIsin) {
     description,
     rating: rHit?.r || null,
     ratingOwn: !!own,
+    /* Дата сбора файла: показываем её рядом с рейтингом, чтобы было видно,
+       если робот однажды перестанет обновлять данные. */
+    ratingAt: ratings?.generatedAt || null,
     ratingCode: rHit?.c ?? null,
     ratingSource: ratings?.source || null,
     issuerId: description.EMITTER_ID || null,
@@ -621,6 +624,12 @@ export async function fetchGirboByInn(inn) {
   if (!key) return null;
   const all = await fetchGirbo();
   return all?.organizations?.[key] || null;
+}
+
+/** Дата сбора файла отчётности — чтобы на сайте было видно, не устарел ли он. */
+export async function fetchGirboDate() {
+  const all = await fetchGirbo();
+  return all?.generatedAt || null;
 }
 
 /** Публичная карточка организации в ГИР БО — для ссылки на первоисточник. */

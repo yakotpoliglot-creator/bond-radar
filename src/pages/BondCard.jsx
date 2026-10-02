@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
 import { fetchBonds, fetchBondCard, fetchIssuerInfo, moexReportsUrl, moexIssueUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, RatingTag, timesWord } from '../components/ui';
-import { nf, money, date, dateShort, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
+import { nf, money, date, dateShort, dateTime, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -511,7 +511,8 @@ export default function BondCard() {
                   ? <>{card.ratingOwn
                     ? `Рейтинг ${card.rating} взят из таблицы котировок smart-lab.ru`
                     : `Рейтинг ${card.rating} — рейтинг эмитента по данным smart-lab.ru; сам этот выпуск `
-                      + 'в таблице источника показан без рейтинга, значение взято по другим выпускам того же эмитента'}.
+                      + 'в таблице источника показан без рейтинга, значение взято по другим выпускам того же эмитента'}
+                    {card.ratingAt ? `, данные собраны ${dateTime(card.ratingAt)}` : ''}.
                     {' '}Агентство и дата присвоения в источнике не указаны, рейтинг относится к эмитенту. Это
                     ориентир, а не выписка из отчёта рейтингового агентства. </>
                   : <>Кредитного рейтинга этой бумаги в источнике рейтингов (таблица котировок smart-lab.ru)
