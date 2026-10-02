@@ -326,7 +326,13 @@ export default function BondCard() {
         <Kpi
           label="Купон, %"
           value={bond?.couponPercent == null ? '—' : nf(bond.couponPercent, 2)}
-          sub={bond?.couponValue == null ? 'ставка unknown' : nf(bond.couponValue, 2) + ' ₽ за выплату'}
+          /* Купон MOEX отдаёт в валюте выпуска. У валютной бумаги
+             писать «₽» нельзя: 47,50 — это доллары, а не рубли.
+             Рядом даём рублёвый эквивалент по курсу биржи. */
+          sub={bond?.couponValue == null ? 'ставка unknown' : (
+            nf(bond.couponValue, 2) + (bond.currency === 'RUB' ? ' ₽' : ' ' + bond.currency) + ' за выплату'
+            + (bond.isCurrency && bond.fxRate ? ` (≈ ${nf(bond.couponValue * bond.fxRate, 0)} ₽)` : '')
+          )}
         />
         <Kpi
           label="Купон к цене, %"
@@ -353,9 +359,12 @@ export default function BondCard() {
 
       {/* ── Калькулятор: «у меня есть сумма и срок» ────────────────
           Считает на уже загруженных данных выпуска, без новых запросов.
+          График купонов передаём внутрь: по нему суммы выплат точнее,
+          чем «ставка × число выплат» — особенно у валютных выпусков,
+          где курс пересчёта у каждого свой.
           key — чтобы при переходе на другой выпуск поля сбросились
           и срок пересчитался под новую дату погашения. */}
-      <YieldCalculator key={bond?.isin || bond?.secid} bond={bond} />
+      <YieldCalculator key={bond?.isin || bond?.secid} bond={bond} coupons={card?.coupons} />
 
       {/* ── График купонных выплат ────────────────────────────────── */}
       {couponsSorted.length > 0 && (
@@ -369,7 +378,16 @@ export default function BondCard() {
 
       {/* ── Купоны, амортизация, оферты ───────────────────────────── */}
       <Panel title="Купоны и амортизация" pad={false} style={{ marginBottom: 14 }}
-        right={<span className="c-3" style={{ fontSize: 11 }}>{(card?.coupons || []).length} купонов</span>}>
+        right={<span className="c-3" style={{ fontSize: 11 }}>
+          {(card?.coupons || []).length} купонов{card?.couponsCapped ? ', показаны не все' : ''}
+        </span>}>
+        {card?.couponsCapped && (
+          <div className="c-3" style={{ fontSize: 10.5, padding: '8px 12px 0', lineHeight: 1.6 }}>
+            У этого выпуска выплат больше, чем отдаёт биржа: она присылает не более
+            100 строк графика. Здесь показаны первые сто — последние выплаты могут
+            быть не видны.
+          </div>
+        )}
         <div className="tbl-wrap">
           <table className="tbl">
             <thead>

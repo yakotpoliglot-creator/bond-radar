@@ -87,6 +87,67 @@ export function yearsUntil(dateStr) {
   return Math.round(days / 365 * 10) / 10;
 }
 
+/**
+ * Купоны из графика выплат, попадающие в срок владения.
+ *
+ * Из графика берём ДАТЫ — они точные, и число выплат получается точным.
+ * А вот суммы у многих выпусков не заполнены: у Россет1Р11 из 39 будущих
+ * купонов сумма известна у нуля (плавающая ставка). Поэтому отдельно
+ * считаем, у скольких выплат сумма есть, и вызывающий код решает:
+ * все известны — берём точную сумму, иначе оцениваем по текущей ставке.
+ *
+ * Рублёвую сумму биржа отдаёт готовой (valueRub, курс на дату выплаты) —
+ * это важно для валютных выпусков, где самим курс не угадать.
+ *
+ * Пустой результат — это тоже ответ («в этот срок выплат не будет»),
+ * поэтому при наличии графика возвращаем объект, а не null.
+ */
+export function couponsWithin(coupons, years, rate = 1) {
+  if (!Array.isArray(coupons) || !coupons.length || !(years > 0)) return null;
+  /* Считаем от полуночи и с запасом в сутки. Без этого купон, совпадающий
+     с датой погашения, выпадал из окна на один день: у РЖД 1Р-21R
+     погашение 2027-06-11, окно кончалось 2027-06-10, и вместо двух
+     выплат мы считали одну — доходность выходила 8,5 % против 14,5 %
+     у биржи. Ошибка была ровно в один день. */
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const until = new Date(today.getTime() + (Math.round(years * 365) + 1) * 86400000);
+  const untilIso = `${until.getFullYear()}-${String(until.getMonth() + 1).padStart(2, '0')}-${String(until.getDate()).padStart(2, '0')}`;
+
+  let count = 0, known = 0, totalRub = 0, seen = false;
+  for (const c of coupons) {
+    if (!c?.date || c.date < todayIso || c.date > untilIso) continue;
+    seen = true;
+    count++;
+    const rub = c.valueRub != null ? c.valueRub : (c.value != null ? c.value * rate : null);
+    if (rub != null) { known++; totalRub += rub; }
+  }
+  return seen ? { count, known, totalRub, byRub: count > 0 && known === count } : null;
+}
+
+/**
+ * Последний ИЗВЕСТНЫЙ купон по графику — оценка для плавающей ставки.
+ *
+ * У бумаг с плавающим купоном биржа отдаёт даты будущих выплат, но не
+ * суммы: у Россет1Р11 из 38 будущих купонов сумма известна у нуля, и
+ * в поле ставки тоже ноль. Считать такие купоны нулём нельзя — выходило
+ * «−0,1 % годовых» у бумаги с доходностью 16,5 %. Ближайшая разумная
+ * оценка — размер последней известной выплаты: ставка сбросится, но это
+ * единственное, на что можно опереться, и мы честно называем это оценкой.
+ */
+export function lastKnownCoupon(coupons, rate = 1) {
+  if (!Array.isArray(coupons) || !coupons.length) return null;
+  let best = null;
+  for (const c of coupons) {
+    if (!c?.date) continue;
+    const rub = c.valueRub != null ? c.valueRub : (c.value != null ? c.value * rate : null);
+    if (rub == null || rub <= 0) continue;
+    if (!best || c.date > best.date) best = { date: c.date, rub };
+  }
+  return best ? best.rub : null;
+}
+
 /** Класс окраски для доходности */
 export function ytmClass(v) {
   if (v == null) return 'c-3';

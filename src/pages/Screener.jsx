@@ -163,12 +163,15 @@ function matchFilters(b, f) {
 
   // Бюджет: «у меня есть N ₽». Стоимость покупки одного лота
   // = (цена / 100 × номинал + НКД) × размер лота.
+  // Считаем по lotCostRub: у валютной бумаги номинал в валюте, а НКД
+  // биржа отдаёт в рублях — без пересчёта по курсу фильтр врал бы
+  // (см. комментарий у withFx в api/moex.js).
   if (f.budget) {
     const bgt = +f.budget;
-    if (bgt > 0 && b.price != null && b.lotSize != null) {
-      const lotCost = (b.price / 100 * (b.faceValue || 1000) + (b.nkd || 0)) * b.lotSize;
-      if (lotCost > bgt) return false;
-    }
+    const cost = b.lotCostRub ?? (b.price != null && b.lotSize != null
+      ? (b.price / 100 * (b.faceValue || 1000) + (b.nkd || 0)) * b.lotSize
+      : null);
+    if (bgt > 0 && cost != null && cost > bgt) return false;
   }
   const range = MATURITY[f.maturity];
   if (range) {
@@ -330,10 +333,11 @@ export default function Screener() {
       if (b.ytm == null) {
         if (filters.hideAnomaly) { hidden++; continue; }
       }
-      // стоимость лота для колонки «Можно купить» при заданном бюджете
-      b._lotCost = (b.price != null && b.lotSize != null)
+      // стоимость лота для колонки «Можно купить» при заданном бюджете.
+      // lotCostRub уже учитывает курс для валютных бумаг.
+      b._lotCost = b.lotCostRub ?? ((b.price != null && b.lotSize != null)
         ? (b.price / 100 * (b.faceValue || 1000) + (b.nkd || 0)) * b.lotSize
-        : null;
+        : null);
       out.push(b);
     }
     // «не больше одного выпуска эмитента» применяем последним —

@@ -277,8 +277,17 @@ function normalize(s, m, y, board = 'TQCB') {
     hasOffer: !!offerDate && s.BONDSUBTYPE !== 'До погашения',
     isQualified: false,
     isCurrencyBond: (s.BONDTYPE || '').includes('Валютная'),
+    /* Бессрочная бумага: даты погашения нет вовсе. Калькулятор не должен
+       молча обещать возврат номинала в конце срока. */
+    isPerpetual: (s.BONDSUBTYPE || '').includes('Бессрочн'),
 
     turnover: m?.VALTODAY != null ? +m.VALTODAY : 0,
+    /* Оборот в валюте выпуска. Вместе с рублёвым оборотом даёт ТОЧНЫЙ
+       курс, по которому биржа считает рубли для этой бумаги: у ВТБ ЗО-Т1
+       и РСЭКСМБ1Р1 он оказался 83,245 — не курс CETS (84,41), а свой
+       расчётный. Проверено на живых сделках: VALUE / VALUE_USD сходится
+       с VALTODAY / VALTODAY_USD до знака. */
+    turnoverFx: m?.VALTODAY_USD != null ? +m.VALTODAY_USD : 0,
     /* Z-спред — премия к безрисковой кривой ОФЗ, в ПРОЦЕНТНЫХ ПУНКТАХ.
        Биржа отдаёт готовое значение: у ОФЗ оно около нуля (проверено:
        от −2,47 до +1,26), у корпоратов доходит до 215. Это самая честная
@@ -378,6 +387,67 @@ async function withRatings(list) {
   return list;
 }
 
+/* ── Валютные бумаги: приводим к рублям ──────────────────────────── *
+ *
+ * Грабли, на которые мы наступили. У валютной бумаги номинал и купон
+ * выражены в валюте, а НКД биржа отдаёт В РУБЛЯХ. Проверено на
+ * ВТБ ЗО-Т1 (RU000A1082Q4): номинал 1000 USD, купон 47,5 (это доллары),
+ * а НКД 2613,9 — рубли, иначе НКД превышал бы номинал в 2,6 раза.
+ *
+ * Складывать их напрямую нельзя. Получалась бумага за 3 260 ₽, хотя
+ * на самом деле она стоит около 57 000 ₽: калькулятор врал про цену
+ * покупки в 17 раз и показывал убыток 2 213 ₽ на выгодной бумаге.
+ *
+ * Поэтому пересчитываем в рубли по курсу биржи и кладём рядом:
+ *   costRub    — цена одной бумаги с НКД, в рублях;
+ *   lotCostRub — цена лота, в рублях;
+ *   fxRate     — курс, по которому считали (1 для рублёвых);
+ *   fxMissing  — курса нет (например, франк биржа не котирует).
+ * Для рублёвых бумаг это ровно прежняя формула — там ничего не меняется.
+ *
+ * Курс берём сегодняшний, и это допущение, а не факт: для валютной
+ * бумаги суммы зависят от курса на дату выплаты. Пишем об этом прямо.
+ */
+let fxRatesPromise = null;
+
+function bondRates() {
+  if (!fxRatesPromise) fxRatesPromise = fetchCurrencyMarket().catch(() => ({}));
+  return fxRatesPromise;
+}
+
+async function withFx(list) {
+  if (!list.some(b => b.isCurrency)) {
+    for (const b of list) { b.fxRate = 1; b.fxRateSrc = 'rub'; b.fxMissing = false; }
+    return list;
+  }
+  const mkt = await bondRates();
+  for (const b of list) {
+    let rate = 1, src = 'rub';
+    if (b.isCurrency) {
+      /* Сначала — курс из расчётов самой биржи по этой бумаге (оборот
+         в рублях ÷ оборот в валюте). Он точный: так биржа и считает
+         рубли по сделкам. Если сегодня бумага не торговалась, берём
+         курс валютной секции и помечаем, что это оценка. */
+      const viaTurnover = (b.turnover > 0 && b.turnoverFx > 0) ? b.turnover / b.turnoverFx : null;
+      const viaMarket = mkt?.[b.currency]?.value > 0 ? mkt[b.currency].value : null;
+      rate = viaTurnover ?? viaMarket ?? null;
+      src = viaTurnover != null ? 'moex' : (viaMarket != null ? 'cets' : 'none');
+    }
+    b.fxRate = rate;
+    b.fxRateSrc = src;
+    b.fxMissing = !!b.isCurrency && rate == null;
+    if (rate != null && b.price != null) {
+      const faceRub = (b.faceValue || 1000) * rate;
+      b.costRub = b.price / 100 * faceRub + (b.nkd || 0);
+      b.lotCostRub = b.costRub * (b.lotSize || 1);
+    } else {
+      b.costRub = null;
+      b.lotCostRub = null;
+    }
+  }
+  return list;
+}
+
 export function fetchBonds({ force = false } = {}) {
   if (force) { bondsCache = null; bondsPromise = null; }
   if (bondsCache) return Promise.resolve(bondsCache);
@@ -407,6 +477,7 @@ export function fetchBonds({ force = false } = {}) {
          файла нет — просто не будет рейтингов, страницы работать
          не перестанут. */
       .then(list => withRatings(list))
+      .then(list => withFx(list))
       .catch(e => { bondsPromise = null; throw e; });
   }
   return bondsPromise;
@@ -442,9 +513,18 @@ export async function fetchBondCard(secidOrIsin) {
 
   const boards = boardData.boards || [];
   const couponId = boards.length ? id : (await boardSecidFor(id)) || id;
+  /* Лимит обязателен. Биржа отдаёт по 20 строк на блок, и мы молча
+     показывали усечённый график: у РЖД-30 с погашением в 2028 году
+     последним купоном стоял 2023-й, а будущих выплат не было вовсе.
+     Проверено на выборке: у 51 % выпусков (39 из 76) из-за этого
+     терялись купоны, у части — все будущие. Тот же лимит режет и
+     график амортизации. Больше 100 биржа не отдаёт (проверено:
+     limit=200 и 500 дают те же 100), поэтому помним про потолок
+     и честно говорим о нём на карточке. */
+  const BONDIZATION_LIMIT = 100;
   const bondization = couponId === id
-    ? await iss(`/securities/${id}/bondization.json`).catch(() => ({}))
-    : await iss(`/securities/${couponId}/bondization.json`).catch(() => ({}));
+    ? await iss(`/securities/${id}/bondization.json`, { limit: BONDIZATION_LIMIT }).catch(() => ({}))
+    : await iss(`/securities/${couponId}/bondization.json`, { limit: BONDIZATION_LIMIT }).catch(() => ({}));
 
   const description = {};
   (desc.description || []).forEach(x => { description[x.name] = x.value; });
@@ -457,7 +537,18 @@ export async function fetchBondCard(secidOrIsin) {
     value: c.value != null ? +c.value : null,
     valuePrc: c.valueprc != null ? +c.valueprc : null,
     faceValue: c.facevalue != null ? +c.facevalue : null,
+    /* Рублёвая сумма выплаты, как её посчитала биржа — по курсу на дату
+       этой выплаты. Для ушедших купонов это факт, для будущих — расчёт
+       по сегодняшнему курсу. Берём готовое, а не умножаем сами: гадать
+       курс для валютного выпуска не надо, биржа уже посчитала.
+       (Проверял догадку про «фиксированный курс 60 ₽/USD» у РСЭКСМБ1Р1 —
+       она неверна: 60 ₽ был просто курс доллара в 2017 году, а дальше
+       отношения идут 58,72 → 63,62 → 67,11, как и было на рынке.) */
+    valueRub: c.value_rub != null ? +c.value_rub : null,
   }));
+  /* Биржа отдаёт не больше 100 строк. Если упёрлись в потолок —
+     честно скажем на карточке, что график показан не весь. */
+  const couponsCapped = (bondization.coupons || []).length >= BONDIZATION_LIMIT;
   const amortizations = (bondization.amortizations || []).map(a => ({
     date: a.amortdate,
     value: a.value != null ? +a.value : null,
@@ -502,6 +593,7 @@ export async function fetchBondCard(secidOrIsin) {
     ratingSource: ratings?.source || null,
     issuerId: description.EMITTER_ID || null,
     coupons,
+    couponsCapped,
     amortizations,
     offers,
     boards: bonds,
