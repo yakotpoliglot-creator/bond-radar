@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  actions: write        # нужно, чтобы попросить выкладку сайта (шаг ниже)
 
 concurrency:
   group: fundamentals
@@ -45,3 +46,21 @@ jobs:
             git commit -m "Робот: МСФО и дивиденды $(date -u +%Y-%m-%d)"
             git push
           fi
+
+      # Выкладку просим явно, а не надеемся только на workflow_run в deploy.yml.
+      #
+      # Почему так. Коммит из Actions обычным токеном не вызывает событие
+      # push, поэтому deploy.yml ловит завершение роботов через workflow_run.
+      # Остальные роботы так и работают, но у этого первый запуск прошёл
+      # впустую: его имя в списке deploy.yml появилось тем же пушем, которым
+      # он сам запустился, и выкладка по завершении не стартовала — данные
+      # закоммитились, а на сайте их не было. Проверено по журналу запусков.
+      #
+      # workflow_dispatch — единственное событие, которое токен Actions
+      # запускать МОЖЕТ (push и workflow_run он подавляет). Поэтому здесь
+      # оно надёжнее. Список в deploy.yml оставлен как второй путь.
+      - name: Попросить выкладку сайта
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run deploy.yml --ref master
