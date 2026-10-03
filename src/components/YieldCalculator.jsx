@@ -188,6 +188,13 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
   }, [amount, years, unitCost, lotCost, lotSize, bond, coupons, amortizations,
       amortCapped, faceRub, rate, todayIso, eventIso, eventKind, eventYearsExact]);
 
+  /* График выплат мог не прийти: у карточки свой запрос, и он не должен
+     ронять страницу (BondCard ловит его в .catch(() => null)). Для
+     купонной бумаги это значит, что купоны неизвестны, и любая доходность
+     была бы выдумкой. Для дисконтной бумаги пустой график — это норма. */
+  const scheduleMissing = (!coupons || coupons.length === 0)
+    && (bond?.couponPercent > 0 || bond?.couponValue > 0);
+
   /* Курса нет — считать в рублях не из чего. Честнее сказать это прямо,
      чем показать красивое число, посчитанное по чужой валюте. */
   if (bond?.fxMissing) {
@@ -247,7 +254,7 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
           />
           <div className="c-3" style={{ fontSize: 10, marginTop: 3 }}>
             {eventIso
-              ? <>до {bond.offerDate ? 'оферты' : 'погашения'} — {nf(eventYearsExact, 2)} г.</>
+              ? <>до {eventKind} — {nf(eventYearsExact, 2)} г.</>
               : 'даты погашения у выпуска нет'}
           </div>
         </div>
@@ -258,6 +265,15 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
         <div className="err" style={{ textAlign: 'left', padding: '10px 0' }}>
           На {nf(calc.sum, 0)} ₽ не купить даже один лот: он стоит {nf(calc.lotCost, 0)} ₽.
           Увеличьте сумму или выберите другую бумагу.
+        </div>
+      ) : scheduleMissing ? (
+        /* График выплат не пришёл (у карточки свой запрос, он мог не
+           ответить). Без графика купоны неизвестны, и посчитанная
+           доходность была бы выдумкой — честнее сказать это прямо. */
+        <div className="err" style={{ textAlign: 'left', padding: '10px 0' }}>
+          График выплат по этой бумаге не загрузился, а без него купоны неизвестны.
+          Считать доходность на пустом графике — значит показать выдуманное число,
+          поэтому мы его не показываем. Обновите страницу через минуту.
         </div>
       ) : calc ? (
         <>
