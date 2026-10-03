@@ -100,6 +100,42 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
     lotCost != null ? String(Math.ceil(lotCost)) : '11500');
   const [years, setYears] = useState(defaultYears);
 
+  /* Купонные поля — в переменные: так их видно и в зависимостях useMemo,
+     и в самом расчёте, без «bond?.» по всему коду. */
+  const couponValueNative = bond?.couponValue ?? null;
+  const couponPercent = bond?.couponPercent ?? null;
+  const couponPeriod = bond?.couponPeriod ?? null;
+
+  /* ГРАФИК ВЫПЛАТ МОГ НЕ ПРИЙТИ, И ЭТО НЕ ПОВОД НЕ СЧИТАТЬ.
+     У карточки свой запрос графика, он не должен ронять страницу. Раньше в
+     этом случае мы показывали ошибку и не считали ничего — а заказчик видел
+     «калькулятор сломался» (03.10.2026, жалоба по РЖД-30).
+     Теперь строим график сами: по текущей ставке купона и периоду выплат,
+     отсчитывая назад от даты оферты или погашения. Так же устроен и график
+     биржи: купон платится в КОНЦЕ периода, поэтому последняя выплата
+     совпадает с событием. Проверено на РЖД-30: самодельный график даёт те
+     же пять дат, что и биржа. Это оценка, и на карточке она так названа. */
+  const schedule = useMemo(() => {
+    if (Array.isArray(coupons) && coupons.length) return { coupons, built: false };
+    const periodDays = couponPeriod > 0 ? couponPeriod : 182;
+    const per = couponValueNative > 0
+      ? couponValueNative * rate
+      : (couponPercent > 0 ? couponPercent / 100 * faceRub * periodDays / 365 : null);
+    if (!(per > 0) || !eventIso || !(eventYearsExact > 0)) return { coupons: [], built: false };
+    const list = [];
+    /* i = 0 — это купон ровно в дату события: он есть в графике биржи
+       (на РЖД-30 последний купон 2028-11-07 совпадает с погашением), и
+       без него самодельный график терял целую выплату и занижал
+       доходность (12,2 % вместо 15,9 %). */
+    for (let i = 0; i <= 400; i++) {
+      const date = isoPlusDays(eventIso, -periodDays * i);
+      if (date <= todayIso) break;
+      list.push({ date, valueRub: per });
+    }
+    return { coupons: list.reverse(), built: list.length > 0 };
+  }, [coupons, couponPeriod, couponValueNative, couponPercent, rate, faceRub,
+      eventIso, eventYearsExact, todayIso]);
+
   /* ── расчёт ── */
   const calc = useMemo(() => {
     const sum = +String(amount).replace(/\s/g, '').replace(',', '.');
@@ -126,20 +162,22 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
        «ноль рублей» — считая такие купоны нулём, получали отрицательную
        доходность у бумаги с доходностью 16,5 %. Тогда опираемся на
        последний известный купон из графика и говорим, что это оценка. */
-    const periodDays = bond.couponPeriod || 182;
-    const fieldRub = bond.couponValue != null && bond.couponValue > 0
-      ? bond.couponValue * rate
-      : (bond.couponPercent != null && bond.couponPercent > 0
-        ? bond.couponPercent / 100 * faceRub * periodDays / 365
+    const periodDays = couponPeriod > 0 ? couponPeriod : 182;
+    const fieldRub = couponValueNative > 0
+      ? couponValueNative * rate
+      : (couponPercent > 0
+        ? couponPercent / 100 * faceRub * periodDays / 365
         : null);
     /* lastKnownCoupon уже возвращает рубли (биржа отдаёт value_rub),
        поэтому курс здесь повторно НЕ применяем. */
-    const lastKnownRub = lastKnownCoupon(coupons, rate);
+    const lastKnownRub = lastKnownCoupon(schedule.coupons, rate);
     const couponFallbackRub = fieldRub ?? lastKnownRub;
-    const couponEstimated = fieldRub == null && lastKnownRub != null;
+    /* Оценка — это и когда биржа не раскрыла суммы (плавающая ставка), и
+       когда графика не было вовсе и мы построили его сами. */
+    const couponEstimated = schedule.built || (fieldRub == null && lastKnownRub != null);
 
     const built = buildFlows({
-      coupons, amortizations, rate,
+      coupons: schedule.coupons, amortizations, rate,
       fromIso: todayIso, toIso, eventIso, faceRub,
       couponFallbackRub, amortCapped,
     });
@@ -182,18 +220,14 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
       gross, tax, net, simpleReturn, annualSimple, couponAnnual,
       yieldEvent, holdToEvent, heldYears, term, eventKind, eventIso,
       couponEstimated, amortRows: built.partials, amortCapped,
-      scheduleKnown: !built.couponEstimated,
+      scheduleBuilt: schedule.built,
+      couponPeriodNow: couponPeriod,
       eventYearsExact,
     };
-  }, [amount, years, unitCost, lotCost, lotSize, bond, coupons, amortizations,
-      amortCapped, faceRub, rate, todayIso, eventIso, eventKind, eventYearsExact]);
-
-  /* График выплат мог не прийти: у карточки свой запрос, и он не должен
-     ронять страницу (BondCard ловит его в .catch(() => null)). Для
-     купонной бумаги это значит, что купоны неизвестны, и любая доходность
-     была бы выдумкой. Для дисконтной бумаги пустой график — это норма. */
-  const scheduleMissing = (!coupons || coupons.length === 0)
-    && (bond?.couponPercent > 0 || bond?.couponValue > 0);
+  }, [amount, years, unitCost, lotCost, lotSize, schedule,
+      couponPeriod, couponValueNative, couponPercent,
+      amortizations, amortCapped, faceRub, rate, todayIso, eventIso, eventKind,
+      eventYearsExact]);
 
   /* Курса нет — считать в рублях не из чего. Честнее сказать это прямо,
      чем показать красивое число, посчитанное по чужой валюте. */
@@ -266,15 +300,6 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
           На {nf(calc.sum, 0)} ₽ не купить даже один лот: он стоит {nf(calc.lotCost, 0)} ₽.
           Увеличьте сумму или выберите другую бумагу.
         </div>
-      ) : scheduleMissing ? (
-        /* График выплат не пришёл (у карточки свой запрос, он мог не
-           ответить). Без графика купоны неизвестны, и посчитанная
-           доходность была бы выдумкой — честнее сказать это прямо. */
-        <div className="err" style={{ textAlign: 'left', padding: '10px 0' }}>
-          График выплат по этой бумаге не загрузился, а без него купоны неизвестны.
-          Считать доходность на пустом графике — значит показать выдуманное число,
-          поэтому мы его не показываем. Обновите страницу через минуту.
-        </div>
       ) : calc ? (
         <>
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 12 }}>
@@ -296,7 +321,11 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
                   выглядели как «48 купонов». Число выплат — ниже. */}
               <div className="kpi-s">
                 {calc.payments === 0 ? 'в этот срок выплат нет'
-                  : <>{calc.payments} выплат{calc.couponEstimated ? ', сумма оценена по последнему купону' : ' по графику биржи'}</>}
+                  : <>{calc.payments} выплат{calc.scheduleBuilt
+                    ? ' — график построен нами по текущей ставке'
+                    : calc.couponEstimated
+                      ? ', сумма оценена по последнему купону'
+                      : ' по графику биржи'}</>}
               </div>
             </div>
             <div className="kpi-card">
@@ -385,7 +414,10 @@ export default function YieldCalculator({ bond, coupons, amortizations = [], amo
             <b>Это сценарий по введённым допущениям, а не обещание доходности.</b>
             {' '}Купоны посчитаны по <i>текущей</i> ставке: если она плавающая или компания
             пересмотрит её, суммы изменятся.
-            {calc.couponEstimated && <> Суммы будущих купонов биржа по этой бумаге не раскрывает,
+            {calc.scheduleBuilt && <> График выплат от биржи в этот раз не пришёл,
+              поэтому мы построили его сами: по текущей ставке купона и периоду выплат,
+              отсчитывая назад от даты события. Это оценка расписания, а не график биржи.</>}
+            {calc.couponEstimated && !calc.scheduleBuilt && <> Суммы будущих купонов биржа по этой бумаге не раскрывает,
               поэтому взята последняя известная выплата — это оценка, а не факт.</>}
             {' '}Доходность к {calc.eventKind} считается так же, как её считает биржа: все выплаты
             вкладываются под ту же ставку до конца срока. Это допущение, а не обещание:
