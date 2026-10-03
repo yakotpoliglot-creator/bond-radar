@@ -14,7 +14,16 @@ import { Link } from 'react-router-dom';
 import { fetchBonds, fetchStocks } from '../api/moex';
 import { Panel, Kpi, Loading, ErrorBox } from '../components/ui';
 import { usePortfolio } from '../lib/store';
-import { nf, money, chgClass } from '../lib/format';
+import { nf, money, chgClass, dateShort, timeLeft } from '../lib/format';
+
+/** Сегодняшняя дата в виде YYYY-MM-DD — для отбора того, что ещё впереди.
+    Через локальные поля, а не toISOString(): в Москве ночью UTC-дата
+    отстала бы на день, и сегодняшнее погашение уехало бы в прошедшие. */
+function todayStr() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 /* Облигация или акция: у облигаций из normalize() всегда есть поле faceValue */
 const isBond = item => !!item && 'faceValue' in item;
@@ -100,6 +109,40 @@ export default function PortfolioPage() {
   const totalNkd = rows.reduce((a, r) => a + (r.nkd != null ? r.nkd * r.p.qty : 0), 0);
   const unpriced = rows.filter(r => !r.priced).length;
   const showNkd = rows.some(r => r.nkd != null);
+
+  /* ── Что из вашего портфеля закрывается в 2026 году ────────────────
+     Папа спрашивал «столько погашений — стоит ли избавляться?». Чтобы
+     отвечать на такой вопрос, нужны не рыночные объёмы, а суммы по его
+     собственным позициям — их и считаем: бумаг × номинал.
+     Цена оферты и последний купон могут быть другими, поэтому пишем
+     прямо, что это номинал, и что оферту ещё нужно предъявить. */
+  const in2026 = useMemo(() => {
+    const today = todayStr();
+    const out = [];
+    for (const r of rows) {
+      const b = r.bond;
+      if (!b) continue;
+      const face = Number(b.faceValue);
+      const amount = Number.isFinite(face) && face > 0 ? face * r.p.qty : null;
+      const pairs = [['mat', b.matDate], ['offer', b.offerDate]];
+      for (const [kind, iso] of pairs) {
+        if (!iso || !String(iso).startsWith('2026') || String(iso) < today) continue;
+        out.push({
+          key: r.p.id + '|' + kind, date: iso, kind, row: r, bond: b, amount,
+          /* Последний купон приходит вместе с номиналом, если ближайшая
+             выплата совпадает с датой погашения. */
+          lastCoupon: kind === 'mat' && b.nextCoupon === iso && b.couponValue != null
+            ? b.couponValue * r.p.qty : null,
+        });
+      }
+    }
+    return out.sort((a, b) => a.date.localeCompare(b.date));
+  }, [rows]);
+  const in2026Mat = in2026.filter(e => e.kind === 'mat');
+  const in2026Offer = in2026.filter(e => e.kind === 'offer');
+  const in2026Sum = in2026Mat.reduce((a, e) => a + (e.amount || 0) + (e.lastCoupon || 0), 0);
+  const in2026OfferSum = in2026Offer.reduce((a, e) => a + (e.amount || 0), 0);
+  const in2026Unknown = in2026Mat.some(e => e.amount == null);
 
   /* Добавление позиции: название подтягиваем из списка биржи */
   async function submit(e) {
@@ -250,6 +293,77 @@ export default function PortfolioPage() {
               sub="уже учтён в стоимости"
             />
           </div>
+
+          {/* ── Что закрывается до конца 2026 года ────────────────── */}
+          {in2026.length > 0 && (
+            <Panel
+              title="Ваши погашения и оферты до конца 2026 года"
+              pad={false}
+              style={{ marginBottom: 14 }}
+            >
+              <div className="tbl-wrap">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Дата</th>
+                      <th>Бумага</th>
+                      <th>Что</th>
+                      <th>Бумаг</th>
+                      <th>Вернётся</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {in2026.map(e => (
+                      <tr key={e.key} style={{ cursor: 'default' }}>
+                        <td>
+                          <div className="mono">{dateShort(e.date)}</div>
+                          <div className="c-3" style={{ fontSize: 10 }}>{timeLeft(e.date)}</div>
+                        </td>
+                        <td>
+                          <Link to={'/bond/' + (e.bond.isin || e.bond.secid)} style={{ fontWeight: 600 }}>
+                            {e.bond.shortname}
+                          </Link>
+                        </td>
+                        <td>
+                          <span className={'tag ' + (e.kind === 'mat' ? 'g' : 'a')}>
+                            {e.kind === 'mat' ? 'Погашение' : 'Оферта'}
+                          </span>
+                        </td>
+                        <td className="mono">{nf(e.row.p.qty, 0)}</td>
+                        <td className="mono">
+                          {e.amount == null
+                            ? <span className="c-3">номинал н/д</span>
+                            : money(e.amount)}
+                          {e.lastCoupon != null && (
+                            <span className="c-3" style={{ fontSize: 10, marginLeft: 5 }}>
+                              + купон {money(e.lastCoupon)}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="c-2" style={{ fontSize: 11.5, padding: '10px 12px', lineHeight: 1.7 }}>
+                <b>Погашения:</b> вернётся {money(in2026Sum)} по {nf(in2026Mat.length, 0)}{' '}
+                {in2026Mat.length === 1 ? 'выпуску' : 'выпускам'} — это номинал плюс последний купон,
+                где он совпадает с датой, и <b>до налога</b>: НДФЛ с дисконта брокер удержит сам.
+                {in2026Unknown && ' По части выпусков биржа номинала не дала — там прочерк.'}
+                <br />
+                <b>Оферты:</b> {nf(in2026Offer.length, 0)} на {money(in2026OfferSum)} номинала — но это
+                право, а не обязанность. Чтобы деньги вернулись, бумагу нужно предъявить к выкупу в срок,
+                который назначает эмитент, и цена выкупа может отличаться от номинала. Купон, если он не
+                попадает на дату выкупа, придёт отдельно.
+                <br />
+                <span className="c-3">
+                  Это календарь возврата денег, а не совет. Держать до даты или продать раньше — решать вам;
+                  мы только показываем, что и когда произойдёт. Бумага, которая уже не торгуется на бирже,
+                  сюда не попадёт: цену и номинал для неё взять неоткуда.
+                </span>
+              </div>
+            </Panel>
+          )}
 
           {/* ── Таблица позиций ───────────────────────────────────── */}
           <Panel title="Позиции" pad={false}>
