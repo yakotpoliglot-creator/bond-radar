@@ -152,11 +152,29 @@ export default function YieldCalculator({ bond, coupons }) {
 
     /* Простая доходность за срок и приведённая к году. Без реинвеста. */
     const simpleReturn = invested > 0 ? (gross / invested) * 100 : null;
-    const annualReturn = simpleReturn != null && term > 0 ? simpleReturn / term : null;
+
+    /* Годовую приводим к сроку, который деньги РЕАЛЬНО лежат в бумаге.
+       Если погашение внутри введённого срока, дальше это уже не доход
+       этой бумаги, а просто деньги на счёте, и делить на введённый срок
+       нельзя. Проверено на «Самолете 01» (погашение 30.10.2026, 27 дней):
+       при сроке 1 год выходило «2,6 % в год» против 44,3 % у биржи —
+       разница была не в расчёте, а вот в этом делении. */
+    const heldYears = redeemInTerm && yearsToRedemption > 0 ? yearsToRedemption : term;
+    const annualReturn = simpleReturn != null && heldYears > 0 ? simpleReturn / heldYears : null;
+
+    /* И то же сложным процентом: именно так считает биржа, поэтому только
+       это число можно сравнивать с её «Доходностью». Простое деление
+       систематически ниже, а на коротком остатке срока разрыв огромный
+       (35 % против 41 % на том же «Самолете»). Показываем второе число
+       не всегда, а когда оно отличается заметно — иначе это лишняя плитка
+       на каждой обычной бумаге, где разница в десятые доли. */
+    const annualCompound = simpleReturn != null && heldYears > 0 && simpleReturn > -100
+      ? ((1 + simpleReturn / 100) ** (1 / heldYears) - 1) * 100
+      : null;
 
     return {
       lots, bondsN, invested, payments, couponPerBond, couponNative, couponsTotal,
-      redemption, gross, tax, net, simpleReturn, annualReturn,
+      redemption, gross, tax, net, simpleReturn, annualReturn, annualCompound, heldYears,
       term, rate, isFxCurrency, bySchedule, amountKnown, couponEstimated,
       noRedemption, yearsToRedemption,
     };
@@ -282,9 +300,29 @@ export default function YieldCalculator({ bond, coupons }) {
               </div>
               {/* Не «доходность к погашению»: это простое деление на срок,
                   без сложного процента. YTM биржа считает иначе, и
-                  подменять одно другим нельзя. */}
-              <div className="kpi-s">простое деление на срок</div>
+                  подменять одно другим нельзя. Но делим на срок ДО
+                  ПОГАШЕНИЯ, если он короче введённого: дольше деньги в
+                  этой бумаге не лежат. */}
+              <div className="kpi-s">
+                {calc.yearsToRedemption != null && calc.term > calc.yearsToRedemption + 0.02
+                  ? 'простое деление на срок до погашения'
+                  : 'простое деление на срок'}
+              </div>
             </div>
+            {/* Биржа считает сложным процентом, и на коротком остатке срока
+                разрыв с простым делением огромный: у «Самолета 01» 35 %
+                против 41 %. Показываем это число, только когда оно
+                отличается заметно, — иначе плитка на каждой бумаге
+                сообщала бы разницу в десятые доли. */}
+            {calc.annualCompound != null && Math.abs(calc.annualCompound - calc.annualReturn) >= 0.5 && (
+              <div className="kpi-card">
+                <div className="kpi-l">Как считает биржа</div>
+                <div className={'kpi-v ' + (calc.annualCompound >= 0 ? 'c-g' : 'c-r')}>
+                  {nf(calc.annualCompound, 1)}<span style={{ fontSize: 13 }}>%</span>
+                </div>
+                <div className="kpi-s">сложный процент по нашей цене; биржа считает по цене последней сделки</div>
+              </div>
+            )}
           </div>
 
           <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
@@ -309,8 +347,9 @@ export default function YieldCalculator({ bond, coupons }) {
             {' '}Купоны посчитаны по <i>текущей</i> ставке: если она плавающая или компания
             пересмотрит её, суммы изменятся. Реинвест купонов не учтён — сложный процент
             зависел бы от будущих ставок, которых мы не знаем. «В год» — это прибыль,
-            поделённая на срок, а <b>не доходность к погашению</b>: биржа считает её иначе,
-            и в плитках выше она своя.
+            поделённая на фактический срок, а <b>не доходность к погашению</b>: эту биржа
+            считает сложным процентом, и когда он отличается заметно, мы показываем её
+            отдельной плиткой.
             {bond.isAmort && (
               <> {' '}<b>У этой бумаги амортизация номинала:</b> он гасится частями по графику,
               поэтому возврат в конце меньше полного номинала, и наши цифры его завышают —
@@ -337,6 +376,13 @@ export default function YieldCalculator({ bond, coupons }) {
               <> {' '}<b>Срок короче, чем до погашения:</b> за это время номинал не
               вернётся, поэтому в расчёте только купоны. Чтобы увидеть погашение,
               поставьте срок {nf(calc.yearsToRedemption, 1)} г. или больше.</>
+            )}
+            {!bond.isPerpetual && calc.yearsToRedemption != null && calc.term > calc.yearsToRedemption + 0.02 && (
+              <> {' '}<b>Бумага гасится раньше введённого срока:</b> номинал вернётся
+              через {nf(calc.yearsToRedemption, 2)} г., и в бумаге деньги лежат только
+              это время — поэтому «в год» считаем за него, а не за {nf(calc.term, 1)} г.
+              Дальше это уже не доход бумаги, а деньги на счёте. За сам введённый срок
+              прибыль та же — {nf(calc.simpleReturn, 1)} %.</>
             )}
             {' '}Налог взят по базовой ставке 13 %; на крупные суммы ставка выше.
             Не является инвестиционной рекомендацией.
