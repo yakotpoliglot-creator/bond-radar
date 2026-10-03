@@ -216,6 +216,53 @@ function parseFinTable(html) {
     }
   }
 
+  /* ── Коэффициенты, которые считаем сами ────────────────────────────
+     Источник подписывает строку «Долг/EBITDA», а внутри лежит ЧИСТЫЙ
+     долг к EBITDA (см. выше). Поэтому оба коэффициента считаем из строк
+     «Долг», «Чистый долг» и «EBITDA», а готовое значение используем
+     только там, где своих строк не хватает.
+
+     Сверено с независимым сервисом по пяти годам X5: общий долг к EBITDA
+     у нас 1,83 / 1,26 / 1,05 / 1,13 / 1,43 — у него 1,8 / 1,3 / 1,1 /
+     1,1 / 1,4. Покрытие процентов источник не даёт вовсе, а без него не
+     видно, выдерживает ли компания свою долговую ставку: у X5 оно упало
+     с 9,7 раза до 4,7 за пять лет, и это важнее самой величины долга. */
+  const at = (k, y) => metrics[k]?.values?.[y];
+  const derive = (key, fn) => {
+    const values = {};
+    for (const y of yearList) {
+      const v = fn(y);
+      if (v != null && Number.isFinite(v)) values[y] = round2(v);
+    }
+    /* Пустая строка не нужна: интерфейс сам покажет прочерк там, где
+       показателя нет, и лишняя строка из одних прочерков только мешает. */
+    if (Object.keys(values).length) metrics[key] = { values };
+  };
+
+  derive('debtEbitda', y => {
+    const d = at('debt', y), e = at('ebitda', y);
+    return d != null && e > 0 ? d / e : null;
+  });
+  /* Свой расчёт надёжнее готового: он есть и там, где источника строка
+     пустая, и он же подтверждает, что подмена в источнике именно такая. */
+  derive('netDebtEbitda', y => {
+    const nd = at('netDebt', y), e = at('ebitda', y);
+    return nd != null && e > 0 ? nd / e : null;
+  });
+  derive('interestCoverage', y => {
+    const e = at('ebitda', y), i = at('interest', y);
+    return e != null && i > 0 ? e / i : null;
+  });
+
+  /* Те же три коэффициента за скользящие двенадцать месяцев: по ним видно
+     нагрузку на сегодня, а не на конец прошлого года. */
+  const deriveLtm = (key, v) => {
+    if (v != null && Number.isFinite(v)) ltm[key] = round2(v);
+  };
+  deriveLtm('debtEbitda', ltm.debt != null && ltm.ebitda > 0 ? ltm.debt / ltm.ebitda : null);
+  deriveLtm('netDebtEbitda', ltm.netDebt != null && ltm.ebitda > 0 ? ltm.netDebt / ltm.ebitda : null);
+  deriveLtm('interestCoverage', ltm.ebitda != null && ltm.interest > 0 ? ltm.ebitda / ltm.interest : null);
+
   /* Даты отчёта по годам — для подписи в интерфейсе. */
   const reportDates = yearList.map(y => {
     const idx = Object.keys(yearAt).find(k => yearAt[k] === y);
@@ -342,8 +389,15 @@ function metricKey(label) {
      долга, иначе он попадает под правило «Долг» и коэффициент теряется.
      Ровно это и случилось, когда правило долга починили: строка «Долг»
      начала находиться, а «Долг/EBITDA» — пропадать. Ловушка видна в
-     отчёте робота как столкновение строк. */
-  if (/долг\s*\/\s*ebitda/i.test(l)) return 'debtEbitda';
+     отчёте робота как столкновение строк.
+
+     Но и подпись источника врёт: под «Долг/EBITDA» лежит ЧИСТЫЙ долг к
+     EBITDA. Проверено на шести компаниях — у X5 за 2024 год там 0,11
+     (это 28,1 / 256,2), тогда как общий долг к EBITDA даёт 1,13; у МТС
+     расхождение ещё резче, 1,55 против 4,17. Поэтому готовое значение
+     кладём в netDebtEbitda, а общий долг к EBITDA считаем сами ниже,
+     из строк «Долг» и «EBITDA». */
+  if (/долг\s*\/\s*ebitda/i.test(l)) return 'netDebtEbitda';
   /* Здесь было /^долг\b/ — и не срабатывало НИКОГДА. В JavaScript
      \b определяется через \w, а \w — это только латиница и цифры,
      поэтому границы слова вокруг кириллицы не существует. Из-за
@@ -381,8 +435,9 @@ function metricKey(label) {
   if (/^дивиденды?\s*\/\s*прибыль/i.test(l) && процент) return 'payoutRatio';
 
   if (/капитализация/i.test(l)) return 'cap';
-  if (/^ev\/ebitda/i.test(l)) return 'evEbitda';
-  if (/долг[/]ebitda/i.test(l)) return 'debtEbitda';
+  if (/^ev\s*\/\s*ebitda/i.test(l)) return 'evEbitda';
+  /* Строку «Долг/EBITDA» ловит правило выше — она тоже подходит под этот
+     образец, но там она обрабатывается раньше и уходит в netDebtEbitda. */
   if (/^ev\b/i.test(l)) return 'ev';
   if (/^eps/i.test(l)) return 'eps';
   if (/bv\/акцию/i.test(l)) return 'bv';

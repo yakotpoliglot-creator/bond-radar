@@ -1,4 +1,4 @@
-import { nf } from '../lib/format';
+import { nf, chgClass, chgArrow } from '../lib/format';
 import { Panel } from './ui';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -53,6 +53,9 @@ const GROUPS = [
       ['debt', 'Долг (общий)', 'млрд ₽', 1],
       ['cash', 'Наличность', 'млрд ₽', 1],
       ['netDebt', 'Чистый долг', 'млрд ₽', 1],
+      ['debtEbitda', 'Долг/EBITDA', '×', 2],
+      ['netDebtEbitda', 'Чистый долг/EBITDA', '×', 2],
+      ['interestCoverage', 'Покрытие процентов', '×', 2],
     ],
   },
   {
@@ -116,8 +119,21 @@ const RATIOS = [
   },
   {
     key: 'debtEbitda', label: 'Долг/EBITDA', unit: '×',
-    hint: 'Сколько лет EBITDA нужно, чтобы расплатиться с долгом',
+    hint: 'Сколько лет EBITDA нужно, чтобы расплатиться со ВСЕМ долгом. '
+      + 'Считаем сами: в источнике под этой подписью лежит чистый долг',
     tone: v => (v == null ? 'na' : v < 0 ? 'good' : v < 2 ? 'good' : v < 4 ? 'warn' : 'bad'),
+  },
+  {
+    key: 'netDebtEbitda', label: 'Чистый долг/EBITDA', unit: '×',
+    hint: 'То же, но из долга вычтены деньги на счетах. Обычно главный '
+      + 'показатель нагрузки: отрицательный значит денег больше, чем долга',
+    tone: v => (v == null ? 'na' : v < 0 ? 'good' : v < 1.5 ? 'good' : v < 3 ? 'warn' : 'bad'),
+  },
+  {
+    key: 'interestCoverage', label: 'Покрытие процентов', unit: '×',
+    hint: 'Сколько раз EBITDA покрывает проценты по долгу. Меньше 1,5 — '
+      + 'долг обслуживается на пределе',
+    tone: v => (v == null ? 'na' : v > 5 ? 'good' : v > 2 ? 'warn' : 'bad'),
   },
   {
     key: 'roe', label: 'ROE', unit: '%',
@@ -167,6 +183,26 @@ function fmtVal(v, digits) {
   return nf(v, digits);
 }
 
+/**
+ * Изменение к прошлому году в процентах — та самая «маленькая арифметика»,
+ * которой в карточке не хватало: под выручкой видно +18,8 %, под капиталом
+ * −64,3 %, и не надо считать в голове.
+ *
+ * Делим на МОДУЛЬ прошлого значения: убыток, сменившийся прибылью
+ * (−100 → +50), — это рост, и минус в знаменателе дал бы минус в ответе.
+ *
+ * Ноль в знаменателе — это не «бесконечный рост», а отсутствие базы:
+ * процент от нуля не считается, поэтому возвращаем null, а не число.
+ */
+function chgPct(v, prev) {
+  if (v == null || prev == null || prev === 0) return null;
+  return (v - prev) / Math.abs(prev) * 100;
+}
+
+/** Показываем изменение только у сумм. У процентов и коэффициентов
+ *  «изменение в процентах» читалось бы как процент от процента. */
+const chgShown = unit => unit.includes('₽') || unit.includes('чел');
+
 /* ── Пересказ цифр простыми словами ─────────────────────────────────
    Это НЕ редакционный разбор и не мнение о компании. Каждое предложение
    здесь — арифметика по той же таблице, что выше: сравнили первый и
@@ -195,12 +231,15 @@ function plainSummary(m, years, ltm) {
     out.push(s + '.');
   }
 
-  const nd = at('netDebt', last), de = at('debtEbitda', last);
+  const nd = at('netDebt', last), de = at('netDebtEbitda', last);
   if (nd != null && eb2 != null && eb2 > 0) {
     if (nd < 0) {
       out.push(`Чистого долга нет: наличности больше долга на ${mlrd(Math.abs(nd))}.`);
     } else {
       let s = `Чистый долг ${mlrd(nd)}`;
+      /* Здесь именно ЧИСТЫЙ долг к EBITDA: строка про чистый долг, и
+         подставлять сюда общий долг к EBITDA было бы неверно — это
+         разные числа, у Х5 они расходятся в тринадцать раз. */
       if (de != null) s += ` — ${nf(de, 2)} годовой EBITDA`;
       out.push(s + '.');
     }
@@ -506,9 +545,12 @@ export default function Fundamentals({ data, right }) {
   return (
     <>
       {periodsPanel}
+      {/* Коэффициенты — до отчётности. Сначала «что сейчас» и «сколько
+          стоит», и только потом длинная таблица по годам: до неё эти
+          четыре плитки приходилось искать прокруткой. */}
+      {ratioCards}
       {finTable}
       {summaryPanel}
-      {ratioCards}
       {divTable}
     </>
   );
@@ -532,13 +574,22 @@ function FragmentRows({ group, m, years, ltm }) {
             <td style={{ textAlign: 'left' }}>
               {label} <span className="c-3" style={{ fontSize: 10 }}>{unit}</span>
             </td>
-            {years.map(y => {
+            {years.map((y, i) => {
               const v = metric.values[y];
               /* Отрицательный чистый долг — это деньги, а не долг: помечаем знаком. */
               const neg = key === 'netDebt' && v != null && v < 0;
+              /* Изменение к прошлому году — под числом, как в карточке-образце.
+                 У самого левого года прошлого нет, и выдумывать его нельзя:
+                 получается пусто, а не «+0,0 %». */
+              const chg = chgShown(unit) && i > 0 ? chgPct(v, metric.values[years[i - 1]]) : null;
               return (
                 <td key={y} style={{ textAlign: 'right' }} className={'mono ' + (neg ? 'c-g' : '')}>
                   {v == null ? '—' : fmtVal(scale ? v / scale : v, digits)}
+                  {chg != null && (
+                    <div className={chgClass(chg)} style={{ fontSize: 9.5, fontWeight: 400 }}>
+                      {chgArrow(chg)} {chg > 0 ? '+' : ''}{nf(chg, 1)}%
+                    </div>
+                  )}
                 </td>
               );
             })}

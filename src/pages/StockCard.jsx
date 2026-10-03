@@ -4,6 +4,7 @@ import Chart from 'chart.js/auto';
 import { fetchStocks, fetchStockHistory, fetchFundamentals } from '../api/moex';
 import { Panel, Kpi, Loading, ErrorBox } from '../components/ui';
 import Fundamentals from '../components/Fundamentals';
+import StockReturnCalculator from '../components/StockReturnCalculator';
 import { nf, money, dateShort, chgStrA, chgPill, ytmTone } from '../lib/format';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -273,6 +274,12 @@ export default function StockCard() {
           <div className="empty">История торгов по этой бумаге недоступна.</div>
         )}
       </Panel>
+
+      {/* ── Калькулятор: что вышло бы с этой акцией ────────────────
+          До отчётности: это вопрос про деньги, а не про баланс, и
+          ответ на него нужен раньше таблицы по годам. Дивиденды для
+          расчёта — из тех же данных робота (fund.data.div). */}
+      <StockReturnCalculator price={price} div={fund?.data?.div} />
 
       {/* ── Отчётность, коэффициенты и дивиденды ──────────────────
           Данные робота со smart-lab. Показываем только если они есть:
