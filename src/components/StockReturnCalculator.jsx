@@ -35,6 +35,22 @@ import { nf } from '../lib/format';
 const TODAY = new Date();
 const THIS_YEAR = TODAY.getFullYear();
 
+/**
+ * Русское склонение после числа: 1 год, 2 года, 5 лет.
+ *
+ * Нужно отдельной функцией, потому что «за 5 годов» — это то, что
+ * получается из наивного «год + ов», и в карточке это выглядело ошибкой.
+ * Отдельно обрабатываем 11–14: «11 лет», а не «11 год».
+ */
+function plural(n, one, few, many) {
+  const abs = Math.abs(n) % 100;
+  if (abs >= 11 && abs <= 14) return many;
+  const last = abs % 10;
+  if (last === 1) return one;
+  if (last >= 2 && last <= 4) return few;
+  return many;
+}
+
 export default function StockReturnCalculator({ price, div }) {
   /* Ссылку на объект не пересоздаём: `div?.perShare || {}` давал бы новый
      объект на каждом рендере, и useMemo пересчитывался бы всегда —
@@ -50,12 +66,36 @@ export default function StockReturnCalculator({ price, div }) {
     return Object.keys(ps).map(Number).filter(y => ps[y] > 0).sort((a, b) => a - b);
   }, [perShare]);
 
-  const firstYear = years.length ? years[0] : THIS_YEAR - 1;
+  /* Годы для выбора — СПЛОШНЫМ отрезком до нынешнего, а не только те, за
+     которые есть выплата. Раньше список строился из лет с дивидендом, и
+     2026 год выбрать было нельзя вовсе — просто потому, что дивиденд за
+     него ещё не начислен. Но купить акцию можно в любой год, и посчитать
+     «а если купить сейчас» — первое, что приходит в голову. Годы без
+     выплат в списке тоже есть: выбрав такой, видишь нулевые дивиденды —
+     это ответ, а не отсутствие ответа.
+
+     По умолчанию ставим НЫНЕШНИЙ год — тот же, к которому относится
+     предзаполненная цена: «купил сегодня по текущей цене». Это
+     единственный сценарий, который не выдуман: поставить сегодняшнюю
+     цену в 2017 год значило бы показать расчёт покупки по цене,
+     которой тогда не было. */
+  const firstPaidYear = years.length ? years[0] : THIS_YEAR;
+  const yearOptions = useMemo(() => {
+    const out = [];
+    for (let y = THIS_YEAR; y >= firstPaidYear; y--) out.push(y);
+    return out;
+  }, [firstPaidYear]);
 
   const [buyPrice, setBuyPrice] = useState(() => (price != null ? String(Math.round(price * 100) / 100) : ''));
   const [qty, setQty] = useState('1');
-  const [buyYear, setBuyYear] = useState(firstYear);
+  const [buyYear, setBuyYear] = useState(THIS_YEAR);
   const [withBuyYear, setWithBuyYear] = useState(false);
+
+  /* С какого года считаем дивиденды. По умолчанию — со следующего за годом
+     покупки: выплату за год получает тот, кто купил до даты отсечки, а она
+     бывает раньше конца года. Галочка «успел получить» включает и год
+     покупки. */
+  const divFrom = withBuyYear ? buyYear : buyYear + 1;
 
   const calc = useMemo(() => {
     const buy = +String(buyPrice).replace(/\s/g, '').replace(',', '.');
@@ -66,8 +106,7 @@ export default function StockReturnCalculator({ price, div }) {
     const invested = buy * n;
     const nowValue = price != null ? price * n : null;
 
-    const from = withBuyYear ? buyYear : buyYear + 1;
-    const paidYears = years.filter(y => y >= from);
+    const paidYears = years.filter(y => y >= divFrom);
     const dividends = paidYears.reduce((s, y) => s + (perShare?.[y] || 0), 0) * n;
 
     const total = nowValue != null ? nowValue + dividends - invested : null;
@@ -80,7 +119,7 @@ export default function StockReturnCalculator({ price, div }) {
     const annualPct = totalPct != null && heldYears >= 1 ? totalPct / heldYears : null;
 
     return { buy, n, invested, nowValue, dividends, paidYears, total, totalPct, annualPct, heldYears };
-  }, [buyPrice, qty, buyYear, withBuyYear, price, perShare, years]);
+  }, [buyPrice, qty, buyYear, divFrom, price, perShare, years]);
 
   const bad = calc == null;
 
@@ -127,12 +166,13 @@ export default function StockReturnCalculator({ price, div }) {
             onChange={e => setBuyYear(+e.target.value)}
             title="В каком году куплена акция"
           >
-            {years.length === 0 && <option value={buyYear}>{buyYear}</option>}
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
+            {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
           {years.length > 0 && (
             <div className="c-3" style={{ fontSize: 10, marginTop: 3 }}>
-              {withBuyYear ? `дивиденды с ${buyYear} года` : `дивиденды с ${buyYear + 1} года`}
+              {divFrom > THIS_YEAR
+                ? 'выплат после покупки ещё не было'
+                : `дивиденды с ${divFrom} года`}
             </div>
           )}
         </div>
@@ -177,7 +217,8 @@ export default function StockReturnCalculator({ price, div }) {
               <div className="kpi-s">
                 {calc.paidYears.length === 0
                   ? 'за эти годы выплат не было'
-                  : `за ${calc.paidYears.length} год${calc.paidYears.length === 1 ? '' : calc.paidYears.length < 5 ? 'а' : 'ов'}: ${calc.paidYears[0]}–${calc.paidYears[calc.paidYears.length - 1]}`}
+                  : `за ${calc.paidYears.length} ${plural(calc.paidYears.length, 'год', 'года', 'лет')}`
+                    + `: ${calc.paidYears[0]}–${calc.paidYears[calc.paidYears.length - 1]}`}
               </div>
             </div>
             <div className="kpi-card">
@@ -202,6 +243,17 @@ export default function StockReturnCalculator({ price, div }) {
               </div>
             </div>
           </div>
+
+          {/* Нынешний год по умолчанию — сценарий «купил сегодня по текущей
+              цене». Он честный, но в нём всё по нулям, и без пояснения это
+              выглядит как поломка. Говорим прямо, почему так и что делать. */}
+          {buyYear === THIS_YEAR && (
+            <div className="c-3" style={{ fontSize: 10.5, marginBottom: 10, lineHeight: 1.7 }}>
+              Год покупки — нынешний, цена — сегодняшняя, поэтому изменений пока нет:
+              это точка отсчёта, а не результат. Поставьте год и цену своей покупки —
+              увидите, что вышло.
+            </div>
+          )}
 
           <div className="c-3" style={{ fontSize: 10.5, lineHeight: 1.7 }}>
             Дивиденды — <b>уже начисленные</b>, из таблицы ниже: прошлые выплаты не гарантируют
