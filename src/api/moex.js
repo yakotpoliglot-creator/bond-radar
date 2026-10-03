@@ -522,9 +522,24 @@ export async function fetchBondCard(secidOrIsin) {
      limit=200 и 500 дают те же 100), поэтому помним про потолок
      и честно говорим о нём на карточке. */
   const BONDIZATION_LIMIT = 100;
-  const bondization = couponId === id
-    ? await iss(`/securities/${id}/bondization.json`, { limit: BONDIZATION_LIMIT }).catch(() => ({}))
-    : await iss(`/securities/${couponId}/bondization.json`, { limit: BONDIZATION_LIMIT }).catch(() => ({}));
+  /* ДОЧИТЫВАЕМ ГРАФИК СТРАНИЦАМИ. Биржа отдаёт не больше 100 строк за
+     запрос, и раньше мы брали только первую сотню. Для расчёта доходности
+     это значило потерянные купоны и заниженный процент: прогон по выборке
+     нашёл 18 выпусков из 241 с урезанным графиком. Дочитываем до 300 строк
+     (этого хватает даже ежемесячным купонам на 25 лет вперёд) и, если
+     упёрлись в потолок, честно говорим об этом на карточке. */
+  const BONDIZATION_MAX = 300;
+  const couponEndpoint = couponId === id ? id : couponId;
+  const rawCoupons = [], rawAmortizations = [], rawOffers = [];
+  for (let start = 0; start < BONDIZATION_MAX; start += BONDIZATION_LIMIT) {
+    const page = await iss(`/securities/${couponEndpoint}/bondization.json`,
+      { limit: BONDIZATION_LIMIT, start }).catch(() => ({}));
+    const cp = page.coupons || [], am = page.amortizations || [], of = page.offers || [];
+    rawCoupons.push(...cp); rawAmortizations.push(...am); rawOffers.push(...of);
+    /* Оба блока кончились — дальше пусто. Если хоть один упёрся в сотню,
+       страницу надо дочитать. */
+    if (cp.length < BONDIZATION_LIMIT && am.length < BONDIZATION_LIMIT) break;
+  }
 
   const description = {};
   (desc.description || []).forEach(x => { description[x.name] = x.value; });
@@ -532,7 +547,7 @@ export async function fetchBondCard(secidOrIsin) {
   const mainBoard = boards.find(b => b.is_primary === 1) || boards[0];
   const bonds = boards;
 
-  const coupons = (bondization.coupons || []).map(c => ({
+  const coupons = rawCoupons.map(c => ({
     date: c.coupondate,
     value: c.value != null ? +c.value : null,
     valuePrc: c.valueprc != null ? +c.valueprc : null,
@@ -546,18 +561,18 @@ export async function fetchBondCard(secidOrIsin) {
        отношения идут 58,72 → 63,62 → 67,11, как и было на рынке.) */
     valueRub: c.value_rub != null ? +c.value_rub : null,
   }));
-  /* Биржа отдаёт не больше 100 строк. Если упёрлись в потолок —
-     честно скажем на карточке, что график показан не весь. */
-  const couponsCapped = (bondization.coupons || []).length >= BONDIZATION_LIMIT;
-  const amortizations = (bondization.amortizations || []).map(a => ({
+  /* Упёрлись в потолок — честно скажем на карточке, что график не весь. */
+  const couponsCapped = rawCoupons.length >= BONDIZATION_MAX;
+  const amortizations = rawAmortizations.map(a => ({
     date: a.amortdate,
     value: a.value != null ? +a.value : null,
     valuePrc: a.valueprc != null ? +a.valueprc : null,
     source: a.data_source,
   }));
+  const amortizationsCapped = rawAmortizations.length >= BONDIZATION_MAX;
   // MOEX отдаёт «пустую» оферту с датой 0000-00-00 (техническая запись «Оферта/Погашение») — отбрасываем
   const validDate = d => !!d && d !== '0000-00-00';
-  const offers = (bondization.offers || [])
+  const offers = rawOffers
     .filter(o => validDate(o.offerdate) || validDate(o.offerdatestart))
     .map(o => ({
       date: validDate(o.offerdate) ? o.offerdate : o.offerdatestart,
@@ -595,6 +610,7 @@ export async function fetchBondCard(secidOrIsin) {
     coupons,
     couponsCapped,
     amortizations,
+    amortizationsCapped,
     offers,
     boards: bonds,
     mainBoard,

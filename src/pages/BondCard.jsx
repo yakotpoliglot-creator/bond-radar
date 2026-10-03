@@ -372,7 +372,13 @@ export default function BondCard() {
           где курс пересчёта у каждого свой.
           key — чтобы при переходе на другой выпуск поля сбросились
           и срок пересчитался под новую дату погашения. */}
-      <YieldCalculator key={bond?.isin || bond?.secid} bond={bond} coupons={card?.coupons} />
+      <YieldCalculator
+        key={bond?.isin || bond?.secid}
+        bond={bond}
+        coupons={card?.coupons}
+        amortizations={card?.amortizations}
+        amortCapped={!!card?.amortizationsCapped}
+      />
 
       {/* ── График купонных выплат ────────────────────────────────── */}
       {couponsSorted.length > 0 && (

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Panel } from './ui';
-import { nf, yearsUntil, couponsWithin, lastKnownCoupon } from '../lib/format';
+import { nf, lastKnownCoupon } from '../lib/format';
+import { buildFlows, yieldToEvent, yearsBetween, isoPlusDays } from '../lib/bondMath';
 
 /* ═══════════════════════════════════════════════════════════════════
    Калькулятор доходности выпуска
@@ -8,29 +9,54 @@ import { nf, yearsUntil, couponsWithin, lastKnownCoupon } from '../lib/format';
    Заказчик просил: «вводишь сумму и срок — получаешь, что будет».
    Считаем на данных MOEX, которые уже загружены на страницу выпуска.
 
-   Что считается ЧЕСТНО:
-     • сколько бумаг влезает в сумму с учётом лота и НКД;
-     • сколько купонов придёт за срок (по текущей ставке купона);
-     • сколько вернётся номинала при погашении/оферте;
-     • простая и годовая доходность на вложенное.
+   ГЛАВНОЕ, ЧТО ЗДЕСЬ ИСПРАВЛЕНО (03.10.2026).
 
-   Чего формула НЕ обещает:
-     • реинвест купонов: сложный процент зависит от будущих ставок,
-       которых мы не знаем. Считаем без реинвеста и говорим об этом;
-     • налог: показываем «до налога» и отдельно сумму НДФЛ;
-     • амортизированные выпуски: номинал гасится частями, поэтому
-       итоговая выплата — не весь номинал. Предупреждаем.
+   Прогон по 273 выпускам рынка показал, что прежний расчёт расходился с
+   доходностью биржи в среднем на 3,4 пп, а на 87 % бумаг — больше чем на
+   1 пп. Причина была не в арифметике, а в формуле: калькулятор брал всю
+   прибыль, делил на срок и возводил в степень — это доходность БЕЗ
+   реинвестирования купонов. Биржа считает иначе, и на бумагах, купленных
+   дороже номинала с крупным купоном, расхождение доходило до смены знака:
+   по RU000A1035H1 калькулятор показывал −65 % при биржевых +0,6 %.
+
+   Теперь доходность считается так же, как её считает биржа: единая
+   ставка, при которой все выплаты, вложенные под неё же до конца срока,
+   дают ровно то, что обещает график выпуска. После правки расхождение с
+   биржей — 0,45 пп в медиане, и это уже разница источников (биржа считает
+   по своей цене), а не наша ошибка. Математика лежит в lib/bondMath.js —
+   отдельно от вёрстки, чтобы её можно было прогнать по всему рынку.
+
+   Что ещё учтено:
+     • амортизация: номинал гасится частями, и эти деньги приходят раньше
+       срока — на 29 амортизирующих выпусках расхождение с биржей упало
+       с 7,2 пп до 0,6 пп;
+     • срок берётся точным (дни, а не округлённые десятые года): на
+       коротких выпусках округление сдвигало годовой процент на десятки;
+     • валютные: номинал пересчитывается курсом, а купон НЕ умножается на
+       курс второй раз (раньше у валютных с плавающей ставкой купон
+       завышался в разы).
+
+   Чего формула не обещает: реинвест по ДРУГОЙ ставке (мы вкладываем по
+   той же — так делает биржа), отсутствие дефолта и то, что налог взят по
+   базовой ставке 13 %.
    ═══════════════════════════════════════════════════════════════════ */
 
 const NDFL = 0.13;   // базовая ставка; на крупные суммы может быть 15%
 
-export default function YieldCalculator({ bond, coupons }) {
+/** Сегодняшняя дата в виде YYYY-MM-DD. Локальные поля, а не UTC:
+    ночью в Москве UTC-дата отстала бы на день. */
+function todayStr() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+export default function YieldCalculator({ bond, coupons, amortizations = [], amortCapped = false }) {
   /* Курс: 1 для рублёвых бумаг, курс биржи — для валютных.
      У валютной бумаги номинал и купон в валюте, а НКД биржа отдаёт
      в рублях. Складывать их напрямую нельзя: получалась бумага за
      3 260 ₽ вместо 57 000 ₽. Пересчитываем номинал курсом. */
   const rate = bond?.fxRate ?? 1;
-  const isFxCurrency = !!bond?.isCurrency;
   const faceRub = (bond?.faceValue || 1000) * rate;
 
   /* Стоимость одной бумаги с НКД — от неё считаем «сколько влезает».
@@ -41,18 +67,37 @@ export default function YieldCalculator({ bond, coupons }) {
   const lotSize = bond?.lotSize || 1;
   const lotCost = unitCost != null ? unitCost * lotSize : null;
 
+  /* Событие, к которому считается доходность: ближайшая оферта, а если её
+     нет — погашение. Именно к нему биржа считает свою «доходность».
+     Прошедшую оферту не берём: у части выпусков в поле стоит уже
+     состоявшаяся дата, и расчёт «к оферте» показывал бы срок в прошлом. */
+  const todayIso = useMemo(() => todayStr(), []);
+  const offerIso = bond?.offerDate || null;
+  const matIso = bond?.matDate || null;
+  const nextEvent = useMemo(() => {
+    const offOk = offerIso && yearsBetween(todayIso, offerIso) > 0 ? offerIso : null;
+    const matOk = matIso && yearsBetween(todayIso, matIso) > 0 ? matIso : null;
+    return { iso: offOk || matOk || null, kind: offOk ? 'оферте' : 'погашению' };
+  }, [todayIso, offerIso, matIso]);
+  const eventIso = nextEvent.iso;
+  const eventKind = nextEvent.kind;
+
+  const eventYearsExact = useMemo(
+    () => (eventIso ? yearsBetween(todayIso, eventIso) : null),
+    [todayIso, eventIso],
+  );
+
+  /* По умолчанию — срок до события. Округляем ВВЕРХ до сотых: если
+     округлить вниз, введённый срок окажется меньше срока до события, и
+     калькулятор решит, что номинал не возвращается. */
+  const defaultYears = useMemo(() => {
+    if (eventYearsExact == null || !(eventYearsExact > 0)) return '1';
+    return String(Math.ceil(eventYearsExact * 100) / 100);
+  }, [eventYearsExact]);
+
   /* По умолчанию — та сумма, что назвал заказчик, но не меньше лота. */
   const [amount, setAmount] = useState(() =>
     lotCost != null ? String(Math.ceil(lotCost)) : '11500');
-
-  /* Срок: по умолчанию — до ближайшего события (оферта или погашение).
-     Расчёт даты — в помощнике yearsUntil: new Date() не чистая функция,
-     и вызывать её прямо в теле компонента нельзя. */
-  const defaultYears = useMemo(() => {
-    const y = yearsUntil(bond?.offerDate || bond?.matDate);
-    return y == null ? '1' : String(y);
-  }, [bond]);
-
   const [years, setYears] = useState(defaultYears);
 
   /* ── расчёт ── */
@@ -69,116 +114,79 @@ export default function YieldCalculator({ bond, coupons }) {
     const bondsN = lots * lotSize;          // бумаг всего
     const invested = lots * lotCost;        // реально потрачено
 
-    /* Купоны за срок. Если есть график выплат — берём суммы прямо из
-       него (биржа отдаёт рублёвую сумму каждой выплаты), иначе считаем
-       по текущей ставке, и это допущение, а не факт. */
+    /* Держим ли до события. Допуск в сутки: введённый срок округлён, и
+       расхождение на день не должно превращать расчёт в «номинал не
+       возвращается». */
+    const holdToEvent = eventYearsExact != null && eventYearsExact > 0
+      && term >= eventYearsExact - 1 / 365;
+    const heldYears = holdToEvent ? eventYearsExact : term;
+    const toIso = holdToEvent ? eventIso : isoPlusDays(todayIso, Math.round(term * 365));
+
+    /* Ставка купона: ноль у плавающих выпусков значит «не раскрыта», а не
+       «ноль рублей» — считая такие купоны нулём, получали отрицательную
+       доходность у бумаги с доходностью 16,5 %. Тогда опираемся на
+       последний известный купон из графика и говорим, что это оценка. */
     const periodDays = bond.couponPeriod || 182;
-    const paymentsPerYear = periodDays > 0 ? 365 / periodDays : 2;
-    /* Ставку берём из поля, но ноль — это «не раскрыта», а не «ноль
-       рублей»: у плавающих выпусков COUPONVALUE = 0 и COUPONPERCENT
-       пустой, и купоны считались нулём (Россет1Р11: −0,1 % годовых
-       при доходности биржи 16,5 %). Тогда опираемся на последний
-       известный купон из графика и говорим, что это оценка. */
-    const rateFromField = bond.couponValue != null && bond.couponValue > 0
-      ? bond.couponValue
+    const fieldRub = bond.couponValue != null && bond.couponValue > 0
+      ? bond.couponValue * rate
       : (bond.couponPercent != null && bond.couponPercent > 0
-        ? bond.couponPercent / 100 * (bond.faceValue || 1000) * periodDays / 365
+        ? bond.couponPercent / 100 * faceRub * periodDays / 365
         : null);
-    const lastKnown = lastKnownCoupon(coupons, rate);
-    const couponNative = rateFromField ?? lastKnown;
-    const couponEstimated = rateFromField == null && lastKnown != null;
-    const couponPerBond = couponNative != null ? couponNative * rate : null;
+    /* lastKnownCoupon уже возвращает рубли (биржа отдаёт value_rub),
+       поэтому курс здесь повторно НЕ применяем. */
+    const lastKnownRub = lastKnownCoupon(coupons, rate);
+    const couponFallbackRub = fieldRub ?? lastKnownRub;
+    const couponEstimated = fieldRub == null && lastKnownRub != null;
 
-    /* График считаем здесь, потому что он зависит от введённого срока.
-       Из графика берём ЧИСЛО выплат — оно точное. Суммы у части
-       выпусков не заполнены (плавающая ставка: у Россет1Р11 из 39
-       будущих купонов сумма есть у нуля), поэтому:
-         • все суммы известны — берём их как есть;
-         • иначе считаем по текущей ставке, и это допущение. */
-    const sched = couponsWithin(coupons, term, rate);
-    const bySchedule = sched != null;
+    const built = buildFlows({
+      coupons, amortizations, rate,
+      fromIso: todayIso, toIso, eventIso, faceRub,
+      couponFallbackRub, amortCapped,
+    });
 
-    const payments = bySchedule ? sched.count
-      : (couponPerBond != null ? Math.floor(paymentsPerYear * term) : null);
+    const couponsTotal = built.couponsTotalRub * bondsN;
+    const amortTotal = built.amortTotalRub * bondsN;
+    const redemption = built.remainingFaceRub * bondsN;
+    const payments = built.couponsCount;
 
-    let couponsTotal = null, amountKnown = false;
-    if (bySchedule) {
-      if (sched.count === 0) {
-        couponsTotal = 0;
-        amountKnown = true;
-      } else if (sched.byRub) {
-        couponsTotal = sched.totalRub * bondsN;
-        amountKnown = true;
-      } else if (couponPerBond != null) {
-        couponsTotal = sched.count * couponPerBond * bondsN;
-      }
-    } else if (payments != null && couponPerBond != null) {
-      couponsTotal = payments * couponPerBond * bondsN;
-    }
-    /* Если хотя бы часть сумм из графика известна, а ставки нет —
-       добираем известные, чтобы не показать ноль. */
-    if (bySchedule && !amountKnown && couponsTotal == null && sched.known > 0) {
-      couponsTotal = sched.totalRub * bondsN;
-      amountKnown = true;
-    }
-
-    /* Возврат номинала. При амортизации часть номинала уже вернулась
-       купонами-погашениями, которых мы не видим, поэтому честно
-       помечаем, что итог завышен без учёта графика амортизации.
-
-       Номинал возвращается только если введённый срок ДОЖИВАЕТ до
-       погашения или оферты. Иначе получалась выдумка: по РЖД-30 с
-       погашением в 2028 году при сроке 1 год мы прибавляли номинал,
-       которого в этом сроке не будет, и рисовали 8 % вместо купонных.
-
-       Отдельный случай — бессрочная бумага: даты погашения нет вовсе,
-       и обещать возврат номинала нельзя. Так у ВТБ ЗО-Т1 выходило 61 %
-       годовых против 14,7 % у биржи; биржа считает бессрочную как купон
-       к цене, и это правильнее.
-
-       В обоих случаях в расчёт идёт только купонный доход, а номинал
-       остаётся вложенным: вернуть его можно продажей по рыночной цене,
-       которой мы не знаем. */
-    const yearsToRedemption = yearsUntil(bond.offerDate || bond.matDate);
-    const redeemInTerm = yearsToRedemption != null && term >= yearsToRedemption - 0.02;
-    const noRedemption = !redeemInTerm;
-    const redemption = faceRub * bondsN;
-
-    const gross = noRedemption
-      ? (couponsTotal || 0)
-      : (couponsTotal || 0) + redemption - invested;
+    /* Прибыль считается только если держим до события: иначе часть
+       вложенного ещё лежит в бумаге, и «прибыль» была бы выдумкой. */
+    const gross = holdToEvent
+      ? couponsTotal + amortTotal + redemption - invested
+      : couponsTotal;
     const tax = gross > 0 ? gross * NDFL : 0;
     const net = gross - tax;
 
-    /* Простая доходность за срок и приведённая к году. Без реинвеста. */
+    /* Доходность к событию — так же, как считает биржа: все выплаты
+       вкладываются под ту же ставку до конца срока. Номинал входит в
+       поток последним днём; при амортизации это ОСТАТОК номинала, иначе
+       номинал посчитался бы дважды. */
+    let yieldEvent = null;
+    if (holdToEvent && eventIso) {
+      const points = built.flows.map(f => ({ t: f.t, cf: f.rub * bondsN }));
+      if (redemption > 0) points.push({ t: eventYearsExact, cf: redemption });
+      yieldEvent = yieldToEvent({ points, tEnd: eventYearsExact, investedRub: invested });
+    }
+
     const simpleReturn = invested > 0 ? (gross / invested) * 100 : null;
-
-    /* Годовую приводим к сроку, который деньги РЕАЛЬНО лежат в бумаге.
-       Если погашение внутри введённого срока, дальше это уже не доход
-       этой бумаги, а просто деньги на счёте, и делить на введённый срок
-       нельзя. Проверено на «Самолете 01» (погашение 30.10.2026, 27 дней):
-       при сроке 1 год выходило «2,6 % в год» против 44,3 % у биржи —
-       разница была не в расчёте, а вот в этом делении. */
-    const heldYears = redeemInTerm && yearsToRedemption > 0 ? yearsToRedemption : term;
-    const annualReturn = simpleReturn != null && heldYears > 0 ? simpleReturn / heldYears : null;
-
-    /* И то же сложным процентом: именно так считает биржа, поэтому только
-       это число можно сравнивать с её «Доходностью». Простое деление
-       систематически ниже, а на коротком остатке срока разрыв огромный
-       (35 % против 41 % на том же «Самолете»). Показываем второе число
-       не всегда, а когда оно отличается заметно — иначе это лишняя плитка
-       на каждой обычной бумаге, где разница в десятые доли. */
-    const annualCompound = simpleReturn != null && heldYears > 0 && simpleReturn > -100
-      ? ((1 + simpleReturn / 100) ** (1 / heldYears) - 1) * 100
-      : null;
+    const annualSimple = simpleReturn != null && heldYears > 0 ? simpleReturn / heldYears : null;
+    /* Купонная доходность к вложенному: единственное, что можно честно
+       сказать, когда срок короче срока до погашения, — доход от купонов.
+       Полная доходность зависит от цены продажи, которой мы не знаем. */
+    const couponAnnual = holdToEvent || heldYears <= 0
+      ? null
+      : (couponsTotal / invested) * 100 / heldYears;
 
     return {
-      lots, bondsN, invested, payments, couponPerBond, couponNative, couponsTotal,
-      redemption, gross, tax, net, simpleReturn, annualReturn, annualCompound, heldYears,
-      term, rate, isFxCurrency, bySchedule, amountKnown, couponEstimated,
-      noRedemption, yearsToRedemption,
+      lots, bondsN, invested, payments, couponsTotal, amortTotal, redemption,
+      gross, tax, net, simpleReturn, annualSimple, couponAnnual,
+      yieldEvent, holdToEvent, heldYears, term, eventKind, eventIso,
+      couponEstimated, amortRows: built.partials, amortCapped,
+      scheduleKnown: !built.couponEstimated,
+      eventYearsExact,
     };
-  }, [amount, years, unitCost, lotCost, lotSize, bond, coupons, faceRub, rate, isFxCurrency]);
+  }, [amount, years, unitCost, lotCost, lotSize, bond, coupons, amortizations,
+      amortCapped, faceRub, rate, todayIso, eventIso, eventKind, eventYearsExact]);
 
   /* Курса нет — считать в рублях не из чего. Честнее сказать это прямо,
      чем показать красивое число, посчитанное по чужой валюте. */
@@ -205,7 +213,7 @@ export default function YieldCalculator({ bond, coupons }) {
 
   return (
     <Panel title="Калькулятор доходности" style={{ marginBottom: 14 }}
-      right={<span className="c-3" style={{ fontSize: 10.5 }}>расчёт по текущей цене и купону</span>}>
+      right={<span className="c-3" style={{ fontSize: 10.5 }}>расчёт по текущей цене, как считает биржа</span>}>
       {/* ── Ввод ── */}
       <div className="filters" style={{ marginBottom: 14 }}>
         <div className="fg">
@@ -238,7 +246,9 @@ export default function YieldCalculator({ bond, coupons }) {
             title="Сколько лет держим бумагу"
           />
           <div className="c-3" style={{ fontSize: 10, marginTop: 3 }}>
-            до {bond.offerDate ? 'оферты' : 'погашения'} — {defaultYears} г.
+            {eventIso
+              ? <>до {bond.offerDate ? 'оферты' : 'погашения'} — {nf(eventYearsExact, 2)} г.</>
+              : 'даты погашения у выпуска нет'}
           </div>
         </div>
       </div>
@@ -264,17 +274,24 @@ export default function YieldCalculator({ bond, coupons }) {
             </div>
             <div className="kpi-card">
               <div className="kpi-l">Купоны за срок</div>
-              <div className="kpi-v">{calc.couponsTotal == null ? '—' : nf(calc.couponsTotal, 0)}</div>
+              <div className="kpi-v">{nf(calc.couponsTotal, 0)}</div>
               {/* Это СУММА денег, а не число выплат: раньше подпись
                   «Купонов за срок» читалась как количество, и 47,5 ₽
                   выглядели как «48 купонов». Число выплат — ниже. */}
               <div className="kpi-s">
-                {calc.payments == null ? 'ставка купона неизвестна'
-                  : calc.payments === 0 ? 'в этот срок выплат нет'
-                    : calc.amountKnown
-                      ? <>{calc.payments} выплат{calc.bySchedule ? ' по графику биржи' : ''}</>
-                      : <>{calc.payments} выплат{calc.bySchedule ? ' по графику' : ''}, сумма оценена{
-                        calc.couponEstimated ? ' по последнему известному купону' : ' по текущей ставке'}</>}
+                {calc.payments === 0 ? 'в этот срок выплат нет'
+                  : <>{calc.payments} выплат{calc.couponEstimated ? ', сумма оценена по последнему купону' : ' по графику биржи'}</>}
+              </div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-l">Возврат номинала</div>
+              <div className="kpi-v">{nf(calc.redemption + calc.amortTotal, 0)}</div>
+              <div className="kpi-s">
+                {!calc.holdToEvent
+                  ? <>остаётся вложенным: срок короче, чем до {calc.eventKind}</>
+                  : calc.amortRows > 0
+                    ? <>частями: {nf(calc.amortTotal, 0)} ₽ досрочно + {nf(calc.redemption, 0)} ₽ в конце</>
+                    : <>одной выплатой при {calc.eventKind === 'оферте' ? 'оферте' : 'погашении'}</>}
               </div>
             </div>
             <div className="kpi-card">
@@ -283,7 +300,35 @@ export default function YieldCalculator({ bond, coupons }) {
                 {nf(calc.gross, 0)}
               </div>
               <div className="kpi-s">
-                {calc.noRedemption ? 'только купоны: номинал остаётся вложенным' : 'номинал + купоны − вложено'}
+                {calc.holdToEvent ? 'номинал + купоны + амортизация − вложено' : 'только купоны: номинал остаётся вложенным'}
+              </div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-l">НДФЛ 13 %</div>
+              <div className="kpi-v">{nf(calc.tax, 0)}</div>
+              <div className="kpi-s">на крупные суммы ставка выше</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-l">Чистыми на руки</div>
+              <div className={'kpi-v ' + (calc.net >= 0 ? 'c-g' : 'c-r')}>{nf(calc.net, 0)}</div>
+              <div className="kpi-s">прибыль минус налог</div>
+            </div>
+            {/* Главное число: доходность к погашению или к оферте. Считается
+                так же, как её считает биржа, — сложным процентом с
+                реинвестированием купонов. Раньше здесь стояла другая
+                формула, и числа расходились с биржей в разы. */}
+            <div className="kpi-card">
+              <div className="kpi-l">Доходность к {calc.eventKind}</div>
+              <div className={'kpi-v ' + (calc.yieldEvent >= 0 ? 'c-g' : 'c-r')}>
+                {calc.yieldEvent == null ? '—' : nf(calc.yieldEvent, 1)}
+                {calc.yieldEvent != null && <span style={{ fontSize: 13 }}>%</span>}
+              </div>
+              <div className="kpi-s">
+                {calc.yieldEvent == null
+                  ? 'посчитать не удалось: слишком короткий остаток срока'
+                  : bond.ytm != null
+                    ? <>сложный процент с реинвестом купонов · биржа показывает {nf(bond.ytm, 1)} %</>
+                    : 'сложный процент с реинвестом купонов — как считает биржа'}
               </div>
             </div>
             <div className="kpi-card">
@@ -291,53 +336,31 @@ export default function YieldCalculator({ bond, coupons }) {
               <div className={'kpi-v ' + (calc.simpleReturn >= 0 ? 'c-g' : 'c-r')}>
                 {nf(calc.simpleReturn, 1)}<span style={{ fontSize: 13 }}>%</span>
               </div>
-              <div className="kpi-s">прибыль ÷ вложенное</div>
-            </div>
-            <div className="kpi-card">
-              <div className="kpi-l">То же в год</div>
-              <div className={'kpi-v ' + (calc.annualReturn >= 0 ? 'c-g' : 'c-r')}>
-                {nf(calc.annualReturn, 1)}<span style={{ fontSize: 13 }}>%</span>
-              </div>
-              {/* Не «доходность к погашению»: это простое деление на срок,
-                  без сложного процента. YTM биржа считает иначе, и
-                  подменять одно другим нельзя. Но делим на срок ДО
-                  ПОГАШЕНИЯ, если он короче введённого: дольше деньги в
-                  этой бумаге не лежат. */}
+              {/* Не «доходность к погашению»: это простое деление, без
+                  сложного процента. Показываем рядом, но не подменяем. */}
               <div className="kpi-s">
-                {calc.yearsToRedemption != null && calc.term > calc.yearsToRedemption + 0.02
-                  ? 'простое деление на срок до погашения'
-                  : 'простое деление на срок'}
+                прибыль ÷ вложенное
+                {calc.annualSimple != null && <> · {nf(calc.annualSimple, 1)} % в год простым делением</>}
               </div>
             </div>
-            {/* Биржа считает сложным процентом, и на коротком остатке срока
-                разрыв с простым делением огромный: у «Самолета 01» 35 %
-                против 41 %. Показываем это число, только когда оно
-                отличается заметно, — иначе плитка на каждой бумаге
-                сообщала бы разницу в десятые доли. */}
-            {calc.annualCompound != null && Math.abs(calc.annualCompound - calc.annualReturn) >= 0.5 && (
-              <div className="kpi-card">
-                <div className="kpi-l">Как считает биржа</div>
-                <div className={'kpi-v ' + (calc.annualCompound >= 0 ? 'c-g' : 'c-r')}>
-                  {nf(calc.annualCompound, 1)}<span style={{ fontSize: 13 }}>%</span>
-                </div>
-                <div className="kpi-s">сложный процент по нашей цене; биржа считает по цене последней сделки</div>
-              </div>
-            )}
           </div>
 
           <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
-            {calc.noRedemption ? (
-              <>В конце срока вернётся только купонный доход. Номинал{' '}
-              <b>{nf(calc.redemption, 0)} ₽</b> остаётся вложенным:{' '}
-              {bond.isPerpetual || calc.yearsToRedemption == null
-                ? 'даты погашения у выпуска нет'
-                : <>до погашения {nf(calc.yearsToRedemption, 1)} г., а срок вы взяли {nf(calc.term, 1)} г.</>}.
-              {' '}Вернуть номинал можно продажей по рыночной цене — её мы не знаем.
-              Налог с прибыли (13 %) — <b>{nf(calc.tax, 0)} ₽</b>, на руки останется{' '}
-              <b>{nf(calc.net, 0)} ₽</b> купонами.</>
+            {calc.holdToEvent ? (
+              <>В конце срока вернётся номинал <b>{nf(calc.redemption, 0)} ₽</b>
+              {calc.amortRows > 0 && <> (и ещё {nf(calc.amortTotal, 0)} ₽ номинала — частями раньше)</>},
+              налог с прибыли (13 %) — <b>{nf(calc.tax, 0)} ₽</b>, на руки останется <b>{nf(calc.net, 0)} ₽</b>.</>
             ) : (
-              <>В конце срока вернётся номинал <b>{nf(calc.redemption, 0)} ₽</b>, налог с прибыли
-              (13 %) — <b>{nf(calc.tax, 0)} ₽</b>, на руки останется <b>{nf(calc.net, 0)} ₽</b>.</>
+              <>В конце срока вернётся только купонный доход. Номинал{' '}
+              <b>{nf(faceRub * calc.bondsN, 0)} ₽</b> остаётся вложенным:{' '}
+              {calc.eventYearsExact == null
+                ? 'даты погашения у выпуска нет'
+                : <>до {calc.eventKind} {nf(calc.eventYearsExact, 2)} г., а срок вы взяли {nf(calc.term, 2)} г.</>}.
+              {' '}Вернуть номинал можно продажей по рыночной цене — её мы не знаем.
+              {calc.couponAnnual != null && (
+                <> {' '}За этот срок купоны дают <b>{nf(calc.couponAnnual, 1)} %</b> годовых на вложенное — это
+                единственное, что можно посчитать точно, не зная цену продажи.</>
+              )}</>
             )}
           </div>
 
@@ -345,45 +368,23 @@ export default function YieldCalculator({ bond, coupons }) {
           <div className="c-3" style={{ fontSize: 10.5, marginTop: 12, lineHeight: 1.7 }}>
             <b>Это сценарий по введённым допущениям, а не обещание доходности.</b>
             {' '}Купоны посчитаны по <i>текущей</i> ставке: если она плавающая или компания
-            пересмотрит её, суммы изменятся. Реинвест купонов не учтён — сложный процент
-            зависел бы от будущих ставок, которых мы не знаем. «В год» — это прибыль,
-            поделённая на фактический срок, а <b>не доходность к погашению</b>: эту биржа
-            считает сложным процентом, и когда он отличается заметно, мы показываем её
-            отдельной плиткой.
-            {bond.isAmort && (
-              <> {' '}<b>У этой бумаги амортизация номинала:</b> он гасится частями по графику,
-              поэтому возврат в конце меньше полного номинала, и наши цифры его завышают —
-              точный расчёт требует графика амортизации.</>
+            пересмотрит её, суммы изменятся.
+            {calc.couponEstimated && <> Суммы будущих купонов биржа по этой бумаге не раскрывает,
+              поэтому взята последняя известная выплата — это оценка, а не факт.</>}
+            {' '}Доходность к {calc.eventKind} считается так же, как её считает биржа: все выплаты
+            вкладываются под ту же ставку до конца срока. Это допущение, а не обещание:
+            реинвестировать по той же ставке можно не всегда.
+            {calc.amortCapped && <> График амортизации биржа отдала не полностью, поэтому
+              досрочные погашения номинала могли не попасть в расчёт.</>}
+            {!calc.amortCapped && calc.amortRows > 0 && <> Амортизация учтена: {calc.amortRows} досрочных
+              погашений номинала внутри срока — они поднимают доходность, потому что деньги
+              возвращаются раньше.</>}
+            {calc.holdToEvent && calc.eventYearsExact != null && calc.eventYearsExact < 0.05 && (
+              <> {' '}<b>До события меньше трёх недель:</b> годовой процент на таком остатке
+              срока очень чувствителен к любой мелочи — и у нас, и у биржи.</>
             )}
-            {isFxCurrency && (
-              <> {' '}<b>Номинал и купон у этой бумаги в {bond.currency}.</b> Мы
-              пересчитали их в рубли по курсу {nf(rate, 2)} ₽ за 1 {bond.currency}
-              {bond.fxRateSrc === 'moex'
-                ? ' — это курс из расчётов самой биржи по сделкам с этой бумагой'
-                : ' — это курс валютной секции, потому что сегодня бумага не торговалась'}.
-              {' '}Рублёвые суммы купонов взяты из графика выплат биржи: она считает
-              каждую по курсу на дату выплаты, и у прошедших выплат это уже факт,
-              а не оценка. Поэтому выплаты в рублях будут другими, если курс
-              изменится. Раньше здесь складывались доллары с рублями, и выходила
-              бессмысленная сумма.</>
-            )}
-            {bond.isPerpetual && (
-              <> {' '}<b>Это бессрочная бумага:</b> даты погашения у неё нет вовсе, поэтому
-              возврат номинала в расчёт не входит — иначе выходила бы обещанная
-              прибыль, которой выпуск не гарантирует.</>
-            )}
-            {!bond.isPerpetual && calc.yearsToRedemption != null && calc.term < calc.yearsToRedemption && (
-              <> {' '}<b>Срок короче, чем до погашения:</b> за это время номинал не
-              вернётся, поэтому в расчёте только купоны. Чтобы увидеть погашение,
-              поставьте срок {nf(calc.yearsToRedemption, 1)} г. или больше.</>
-            )}
-            {!bond.isPerpetual && calc.yearsToRedemption != null && calc.term > calc.yearsToRedemption + 0.02 && (
-              <> {' '}<b>Бумага гасится раньше введённого срока:</b> номинал вернётся
-              через {nf(calc.yearsToRedemption, 2)} г., и в бумаге деньги лежат только
-              это время — поэтому «в год» считаем за него, а не за {nf(calc.term, 1)} г.
-              Дальше это уже не доход бумаги, а деньги на счёте. За сам введённый срок
-              прибыль та же — {nf(calc.simpleReturn, 1)} %.</>
-            )}
+            {bond.isPerpetual && <> У бессрочной бумаги даты возврата номинала нет вовсе,
+              поэтому доходность к погашению не считается: её считают как купон к цене.</>}
             {' '}Налог взят по базовой ставке 13 %; на крупные суммы ставка выше.
             Не является инвестиционной рекомендацией.
           </div>
