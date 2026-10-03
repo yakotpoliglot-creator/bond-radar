@@ -14,10 +14,18 @@ const SHARES_URL = `${ISS}/engines/stock/markets/shares/boards/TQBR/securities.j
 
 /* ── низкоуровневый запрос ───────────────────────────────────────── */
 /* extended=true → ответ вида [charsetinfo, {block:[...]}] и мы отдаём второй
-   элемент. Но осторожно: у /iss/securities/{SECID}.json в extended-режиме
-   блок description приходит ПУСТЫМ (0 строк) — проверено на живом ISS, там
-   40 полей против нуля. Поэтому паспорт бумаги запрашиваем с extended:false
-   и работаем с обычным объектом блоков. */
+   элемент.
+
+   ОПРОВЕРГНУТОЕ УТВЕРЖДЕНИЕ (проверено 03.10.2026). Здесь раньше было
+   написано, что у /securities/{SECID}.json в extended-режиме блок description
+   приходит пустым, поэтому паспорт бумаги запрашивали с extended:false.
+   Это неверно: живой ISS отдаёт description в extended-режиме — 39 полей по
+   РЖД-30 (RU000A0JUAH8) и 38 по ОФЗ 26238 (SU26238RMFS4), ровно столько же,
+   сколько без extended, и столько же с iss.only=description. Карточка
+   выпуска читает паспорт именно из extended-ответа (fetchBondCard: `desc`)
+   и работает — то есть код всё это время брал данные оттуда, откуда по
+   комментарию их быть не могло. Комментарий исправлен, чтобы следующая
+   сессия не «переоткрывала» несуществующую проблему. */
 async function iss(path, params = {}, { retries = 3, extended = true } = {}) {
   const url = new URL(ISS + path);
   url.searchParams.set('iss.meta', 'off');
