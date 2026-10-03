@@ -355,6 +355,14 @@ export default function BondCard() {
           value={offerDate ? dateShort(offerDate) : '—'}
           sub={offerDate ? timeLeft(offerDate) : 'оферты нет'}
         />
+        {/* Погашение отдельной плиткой, а не только строчкой в примечании:
+            в брокере эти две даты стоят рядом, и человек ищет их рядом.
+            Раньше дата погашения была спрятана в тексте ниже. */}
+        <Kpi
+          label="Погашение"
+          value={matDate ? dateShort(matDate) : '—'}
+          sub={matDate ? timeLeft(matDate) : 'даты нет'}
+        />
       </div>
 
       {/* ── Калькулятор: «у меня есть сумма и срок» ────────────────

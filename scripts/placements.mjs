@@ -559,6 +559,14 @@ async function bondInfo({ isin, regNumber }, pool, descCache) {
     currency: sec?.FACEUNIT || 'SUR',
     secid: sec?.SECID || null,
     traded: sec ? Boolean(sec.PREVPRICE || sec.PREVLEGALCLOSEPRICE) : false,
+    /* То, что видно в брокере по уже торгуемой бумаге: цена, НКД и
+       доходность. У свежего размещения всего этого ещё нет — биржа
+       ничего не публикует, пока не прошли первые сделки, и прочерк
+       здесь честнее нуля. */
+    price: num(sec?.LAST) ?? num(sec?.MARKETPRICE) ?? num(sec?.PREVPRICE) ?? num(sec?.PREVLEGALCLOSEPRICE),
+    nkd: num(sec?.ACCRUEDINT),
+    ytm: num(sec?.YIELD),
+    yieldDateType: sec?.YIELDDATETYPE || null,
   };
 }
 
@@ -718,8 +726,24 @@ async function main() {
   const pool = { byIsin: new Map(), byReg: new Map() };
   for (const board of ['TQCB', 'TQOB']) {
     const d = await iss(`/engines/stock/markets/bonds/boards/${board}/securities.json`);
+    /* Цена и доходность лежат НЕ в блоке securities, а в двух соседних:
+       marketdata (LAST, MARKETPRICE, YIELD) и marketdata_yields
+       (YIELDDATETYPE — к погашению или к оферте). Раньше брали только
+       securities, поэтому в анонсе размещения нечего было показать про
+       доходность — а брокер её показывает, и папа спрашивал именно про
+       то, что видно в брокере. */
+    const M = new Map((d.marketdata || []).map(r => [r.SECID, r]));
+    const Y = new Map((d.marketdata_yields || []).map(r => [r.SECID, r]));
     for (const s of d.securities || []) {
-      const row = { ...s, BOARDID: board };
+      const m = M.get(s.SECID), y = Y.get(s.SECID);
+      const row = {
+        ...s,
+        BOARDID: board,
+        LAST: m?.LAST ?? null,
+        MARKETPRICE: m?.MARKETPRICE ?? null,
+        YIELD: m?.YIELD ?? null,
+        YIELDDATETYPE: y?.YIELDDATETYPE ?? null,
+      };
       if (s.ISIN) pool.byIsin.set(keyOf(s.ISIN), row);
       if (s.SECID && !pool.byIsin.has(keyOf(s.SECID))) pool.byIsin.set(keyOf(s.SECID), row);
       if (s.REGNUMBER) pool.byReg.set(keyOf(s.REGNUMBER), row);

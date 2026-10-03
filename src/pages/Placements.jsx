@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchPlacements, couponKind, COUPON_LABEL, COUPON_TAG } from '../api/moex';
-import { Panel, Loading, ErrorBox, Kpi, timesWord } from '../components/ui';
+import { fetchPlacements, fetchRatings, couponKind, COUPON_LABEL, COUPON_TAG } from '../api/moex';
+import { Panel, Loading, ErrorBox, Kpi, timesWord, RatingTag } from '../components/ui';
+import { ytmClass, nf } from '../lib/format';
 
 /* ═══════════════════════════════════════════════════════════════════
    Первичные размещения — /placements.
@@ -185,13 +186,25 @@ function termYears(item, today) {
 
 /* ── карточка ────────────────────────────────────────────────────── */
 
-function PlacementCard({ item, kind, today }) {
+function PlacementCard({ item, kind, today, ratings }) {
   const bond = item.bond || null;
   const status = statusOf(item, new Date());
   const ck = bond ? couponKind({ COUPON_DETAILS: bond.couponDetails, BONDTYPE: bond.bondType }) : null;
   const series = seriesOf(item);
   const term = termYears(item, today);
   const linkId = bond?.secid || item.isin;
+
+  /* Рейтинг берём из нашего файла рейтингов — того же, что показывает
+     карточка выпуска. Биржа его не публикует, поэтому в анонсе его нет,
+     а в брокере он есть: без него доходность не с чем соотнести.
+     Рейтинг у источника эмитентский, поэтому у разных выпусков одного
+     эмитента он один и тот же — это нормально, так и должно быть. */
+  const rating = ratings?.ratings?.[item.isin]?.r || null;
+  const ratingCode = ratings?.ratings?.[item.isin]?.c ?? null;
+
+  /* Выплат в год: из периода купона, а не «примерно». 365 делим на период
+     в днях — так же, как в карточке выпуска. */
+  const perYear = bond?.couponPeriodDays > 0 ? 365 / bond.couponPeriodDays : null;
 
   return (
     <div className="pl-card">
@@ -232,6 +245,44 @@ function PlacementCard({ item, kind, today }) {
             <div><span>Погашение</span><b>{bond?.matDate ? fmtMonth(bond.matDate) : '—'}{term != null ? ` · ${term.toFixed(1).replace('.', ',')} г.` : ''}</b></div>
           </>
         )}
+
+        {/* ── То, что видно в брокере ────────────────────────────────
+            Прочерк здесь означает «биржа ещё не публикует»: до первых
+            сделок ни цены, ни доходности не существует, и рисовать ноль
+            вместо них значило бы выдумать данные. */}
+        <div>
+          <span>Рейтинг</span>
+          <b>{rating
+            ? <RatingTag rating={rating} code={ratingCode} />
+            : <span className="c-3" style={{ fontSize: 10.5 }}>источник не публикует</span>}</b>
+        </div>
+        <div>
+          <span>Доходность</span>
+          <b>{bond?.ytm == null
+            ? <span className="c-3">—</span>
+            : <span className={ytmClass(bond.ytm)}>{fmtPct(bond.ytm)}
+              {bond.yieldDateType === 'OFFER' ? ' к оферте' : ''}</span>}</b>
+        </div>
+        <div>
+          <span>Цена · НКД</span>
+          <b>{bond?.price == null
+            ? <span className="c-3">—</span>
+            : <>{fmtPct(bond.price)}
+              <span className="c-3"> · НКД {bond.nkd == null ? '—' : nf(bond.nkd, 2) + ' ₽'}</span></>}</b>
+        </div>
+        <div>
+          <span>Ближайший купон</span>
+          <b>{bond?.nextCoupon ? fmtDate(bond.nextCoupon) : <span className="c-3">—</span>}</b>
+        </div>
+        <div>
+          <span>Выплат в год</span>
+          <b>{perYear == null ? <span className="c-3">—</span> : timesWord(perYear)}
+            {bond?.couponPeriodDays ? <span className="c-3"> · период {bond.couponPeriodDays} дн.</span> : null}</b>
+        </div>
+        <div>
+          <span>Оферта</span>
+          <b>{bond?.offerDate ? fmtDate(bond.offerDate) : <span className="c-3">оферты нет</span>}</b>
+        </div>
       </div>
 
       <div className="pl-foot">
@@ -256,14 +307,22 @@ export default function Placements() {
   const [chip, setChip] = useState('all');
   const [coupon, setCoupon] = useState('any');
   const [term, setTerm] = useState('any');
+  const [ratings, setRatings] = useState(null);
   const [, setTick] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const d = await fetchPlacements();
+      /* Рейтинги — отдельный маленький файл. Если его нет, карточки
+         работают как раньше: в строке «Рейтинг» будет честное «источник
+         не публикует», а не пустое место. */
+      const [d, r] = await Promise.all([
+        fetchPlacements(),
+        fetchRatings().catch(() => null),
+      ]);
       if (!d) throw new Error('Файл placements.json не найден');
       setData(d);
+      setRatings(r);
       setLoading(false);
     } catch (e) {
       setError(e); setLoading(false);
@@ -417,7 +476,7 @@ export default function Placements() {
       ) : (
         <div className="pl-grid">
           {rows.map(x => (
-            <PlacementCard key={x.id} item={x} kind={x.kind} today={today} />
+            <PlacementCard key={x.id} item={x} kind={x.kind} today={today} ratings={ratings} />
           ))}
         </div>
       )}
@@ -432,10 +491,17 @@ export default function Placements() {
           с временем, режим и цена размещения, андеррайтер; по завершённым выпускам — фактический объём,
           количество бумаг и доля размещённых.
           <br />
-          <b>Нет и не выдумано:</b> рейтинги — у источника нет ни агентства, ни даты присвоения;
-          ориентир купона <i>до</i> размещения — ставку раскрывает эмитент, а не биржа; книга заявок — биржа её
-          не публикует. Купон, тип купона и погашение подтягиваются из торговых данных биржи по ISIN или
-          регистрационному номеру и появляются <i>после</i> выхода бумаги на торги — до этого в карточке прочерки.
+          <b>Как в брокере:</b> рейтинг, доходность (к погашению или к оферте — биржа помечает сама), цена и НКД,
+          ближайший купон, число выплат в год, оферта. Рейтинг — из нашего отдельного файла (сводная таблица
+          smart-lab): агентства и даты присвоения в нём нет, и это рейтинг эмитента, один на все его выпуски.
+          Всё остальное появляется <i>после</i> выхода бумаги на торги: до первых сделок ни цены, ни доходности
+          не существует, и прочерк там честнее нуля.
+          <br />
+          <b>Нет и не выдумано:</b> <b>обеспечение и поручитель</b> — этого не публикует никто из открытых
+          источников: ни биржа, ни раскрытие. Такое есть только в эмиссионных документах, руками. Поэтому
+          строки «обеспечение» здесь нет вовсе — пустая строка выглядела бы как «обеспечения нет», а это
+          было бы уже утверждение, которого мы не проверяли. Дальше: ориентир купона <i>до</i> размещения —
+          ставку раскрывает эмитент, а не биржа; книга заявок — биржа её не публикует.
           <br />
           <b>Полнота:</b> робот показывает то, что биржа успела опубликовать. Если эмитент объявил размещение
           только своим раскрытием, не через биржу, его в списке не будет.
