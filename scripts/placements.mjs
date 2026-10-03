@@ -537,6 +537,10 @@ async function bondInfo({ isin, regNumber }, pool, descCache) {
   desc = desc || {};
 
   const num = v => (v == null || v === '' ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+  /* Для цены и доходности ноль — это не значение, а «биржа не считала»:
+     без сделок YIELD и MARKETPRICE приходят ровно нулями. Отдельная
+     функция, чтобы это правило нельзя было забыть в одном месте. */
+  const pos = v => (v != null && v > 0 ? v : null);
   const coupon = sec?.COUPONPERCENT != null ? num(sec.COUPONPERCENT) : num(desc.COUPONPERCENT);
 
   return {
@@ -562,10 +566,16 @@ async function bondInfo({ isin, regNumber }, pool, descCache) {
     /* То, что видно в брокере по уже торгуемой бумаге: цена, НКД и
        доходность. У свежего размещения всего этого ещё нет — биржа
        ничего не публикует, пока не прошли первые сделки, и прочерк
-       здесь честнее нуля. */
-    price: num(sec?.LAST) ?? num(sec?.MARKETPRICE) ?? num(sec?.PREVPRICE) ?? num(sec?.PREVLEGALCLOSEPRICE),
+       здесь честнее нуля.
+
+       ВАЖНО про ноль: по выпуску, где сегодня не было сделок, биржа
+       отдаёт YIELD и MARKETPRICE ровно нулями. Ноль доходности — это не
+       «доходности нет, но ноль», это «биржа не считала»: показывать его
+       значит врать в самом чувствительном месте. Поймал на живом файле:
+       у ВТБ и Роснано в анонсах стоял 0 %. */
+    price: pos(num(sec?.LAST)) ?? pos(num(sec?.MARKETPRICE)) ?? pos(num(sec?.PREVPRICE)) ?? pos(num(sec?.PREVLEGALCLOSEPRICE)),
     nkd: num(sec?.ACCRUEDINT),
-    ytm: num(sec?.YIELD),
+    ytm: pos(num(sec?.YIELD)),
     yieldDateType: sec?.YIELDDATETYPE || null,
   };
 }

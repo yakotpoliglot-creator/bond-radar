@@ -258,17 +258,20 @@ function PlacementCard({ item, kind, today, ratings }) {
         </div>
         <div>
           <span>Доходность</span>
-          <b>{bond?.ytm == null
-            ? <span className="c-3">—</span>
-            : <span className={ytmClass(bond.ytm)}>{fmtPct(bond.ytm)}
-              {bond.yieldDateType === 'OFFER' ? ' к оферте' : ''}</span>}</b>
+          {/* `> 0`, а не `!= null`: без сделок биржа отдаёт доходность
+              ровно нулём, и «0,00 %» читалось бы как настоящая ставка.
+              В файле от прошлых прогонов робота такие нули ещё есть. */}
+          <b>{bond?.ytm > 0
+            ? <span className={ytmClass(bond.ytm)}>{fmtPct(bond.ytm)}
+              {bond.yieldDateType === 'OFFER' ? ' к оферте' : ''}</span>
+            : <span className="c-3">—</span>}</b>
         </div>
         <div>
           <span>Цена · НКД</span>
-          <b>{bond?.price == null
-            ? <span className="c-3">—</span>
-            : <>{fmtPct(bond.price)}
-              <span className="c-3"> · НКД {bond.nkd == null ? '—' : nf(bond.nkd, 2) + ' ₽'}</span></>}</b>
+          <b>{bond?.price > 0
+            ? <>{fmtPct(bond.price)}
+              <span className="c-3"> · НКД {bond.nkd == null ? '—' : nf(bond.nkd, 2) + ' ₽'}</span></>
+            : <span className="c-3">—</span>}</b>
         </div>
         <div>
           <span>Ближайший купон</span>
