@@ -25,6 +25,48 @@ function todayStr() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/* ── CSV портфеля ─────────────────────────────────────────────────────
+
+   Это третье из пяти требований папы и последнее незакрытое: «портфель
+   CSV импорт/экспорт». Формат выгрузки — как в скринере: разделитель «;»
+   и BOM, чтобы Excel в русской локали открыл файл сразу, без танцев с
+   кодировкой. Числа отдаём с точкой: Excel поймёт.
+
+   Импорт намеренно терпимый: файл человек может получить откуда угодно —
+   из банка, из другого сервиса, из своей таблицы. Поэтому принимаем и «;»,
+   и «,», и кавычки, и отсутствие заголовка, и запятую в числах. */
+
+/** Разбор CSV: кавычки, любой из двух разделителей, BOM, CRLF. */
+function parseCsv(text) {
+  const clean = String(text || '').replace(/^\uFEFF/, '');
+  const first = clean.split(/\r?\n/)[0] || '';
+  /* Разделитель — по первой строке: где больше, тот и он. */
+  const sep = first.split(';').length >= first.split(',').length ? ';' : ',';
+  const out = [];
+  let row = [], cell = '', quoted = false;
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (clean[i + 1] === '"') { cell += '"'; i++; } else quoted = false;
+      } else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === sep) { row.push(cell); cell = ''; }
+    else if (ch === '\n') { row.push(cell); out.push(row); row = []; cell = ''; }
+    else if (ch !== '\r') cell += ch;
+  }
+  if (cell !== '' || row.length) { row.push(cell); out.push(row); }
+  return out.filter(r => r.some(c => String(c).trim() !== ''));
+}
+
+/** Число из CSV: «1 234,56», «1234.56», «1234 ₽» — всё понимаем. */
+function csvNum(v) {
+  const s = String(v ?? '').replace(/[\s\u00A0₽]/g, '').replace(',', '.');
+  if (s === '') return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 /* Облигация или акция: у облигаций из normalize() всегда есть поле faceValue */
 const isBond = item => !!item && 'faceValue' in item;
 
@@ -62,6 +104,7 @@ export default function PortfolioPage() {
   const [form, setForm] = useState({ code: '', qty: '', buyPrice: '' });
   const [formErr, setFormErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [csvMsg, setCsvMsg] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -189,6 +232,118 @@ export default function PortfolioPage() {
     setBusy(false);
   }
 
+  /* ── Выгрузка портфеля в CSV ─────────────────────────────────────── */
+  const exportCsv = () => {
+    const cols = [
+      ['ISIN', r => r.p.isin],
+      ['Тикер', r => r.p.secid],
+      ['Название', r => r.bond?.shortname || r.item?.shortname || r.p.shortname],
+      ['Количество', r => r.p.qty],
+      ['Цена покупки', r => r.p.buyPrice],
+      ['Дата покупки', r => r.p.buyDate],
+      ['Вложено, ₽', r => r.invested.toFixed(2)],
+      ['Стоимость, ₽', r => (r.value == null ? '' : r.value.toFixed(2))],
+      ['П/У, ₽', r => (r.pl == null ? '' : r.pl.toFixed(2))],
+      ['П/У, %', r => (r.plPct == null ? '' : r.plPct.toFixed(2))],
+    ];
+    const esc = v => {
+      if (v == null) return '';
+      const s = String(v);
+      return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [cols.map(c => esc(c[0])).join(';')];
+    for (const r of rows) lines.push(cols.map(c => esc(c[1](r))).join(';'));
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'bond-radar-portfel-' + todayStr() + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setCsvMsg({ cls: 'c-2', text: `Выгружено ${rows.length} позиций. Файл открывается в Excel как есть.` });
+  };
+
+  /* ── Загрузка портфеля из CSV ────────────────────────────────────── */
+  async function importCsv(file) {
+    if (!file) return;
+    setCsvMsg({ cls: 'c-2', text: 'Читаем файл…' });
+    let table;
+    try {
+      table = parseCsv(await file.text());
+    } catch (e) {
+      setCsvMsg({ cls: 'c-r', text: 'Не удалось прочитать файл: ' + e.message });
+      return;
+    }
+    if (!table.length) { setCsvMsg({ cls: 'c-r', text: 'Файл пустой — ни одной строки.' }); return; }
+
+    /* Заголовок ищем по словам, а не по позиции: файлы приходят разные.
+       Если заголовка нет, берём колонки по порядку — ISIN, тикер,
+       название, количество, цена, дата (это наш же формат выгрузки). */
+    const head = table[0].map(s => String(s).trim().toLowerCase());
+    const looksHeader = head.some(s => /isin|тикер|ticker|назван|бумаг|колич|кол-во|цена/.test(s));
+    const body = looksHeader ? table.slice(1) : table;
+    const at = (names, fallback) => {
+      const i = head.findIndex(s => names.some(n => s.includes(n)));
+      return i >= 0 ? i : fallback;
+    };
+    const cIsin = at(['isin'], 0);
+    const cTicker = at(['тикер', 'ticker', 'secid'], 1);
+    const cName = at(['назван', 'бумага', 'name'], 2);
+    const cQty = at(['колич', 'кол-во', 'qty', 'шт'], 3);
+    const cPrice = at(['цена', 'price'], 4);
+    const cDate = at(['дата', 'date'], 5);
+
+    /* Ищем бумагу по ISIN, тикеру или названию — в облигациях и акциях. */
+    const all = [...bonds, ...stocks];
+    const find = (raw) => {
+      const key = String(raw || '').trim().toLowerCase();
+      if (!key) return null;
+      return all.find(x =>
+        String(x.isin || '').toLowerCase() === key ||
+        String(x.secid || '').toLowerCase() === key ||
+        String(x.shortname || '').toLowerCase() === key) || null;
+    };
+
+    let added = 0;
+    const problems = [];
+    body.forEach((r, n) => {
+      const lineNo = n + (looksHeader ? 2 : 1);
+      const qty = csvNum(r[cQty]);
+      const price = csvNum(r[cPrice]);
+      const hit = find(r[cIsin]) || find(r[cTicker]) || find(r[cName]);
+      if (!hit) {
+        problems.push(`строка ${lineNo}: не нашли бумагу «${String(r[cIsin] || r[cTicker] || r[cName] || '').trim()}» в списках биржи`);
+        return;
+      }
+      if (!(qty > 0)) { problems.push(`строка ${lineNo}: количество не число («${r[cQty]}»)`); return; }
+      if (price == null || price < 0) { problems.push(`строка ${lineNo}: цена не число («${r[cPrice]}»)`); return; }
+      const dateRaw = String(r[cDate] || '').trim();
+      const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(dateRaw);
+      add({
+        isin: hit.isin || null,
+        secid: hit.secid || null,
+        shortname: hit.shortname || null,
+        qty,
+        buyPrice: price,
+        buyDate: dateOk ? dateRaw : todayStr(),
+      });
+      added++;
+    });
+
+    /* Отчитываемся честно: что взяли и что не поняли. Молча пропустить
+       половину строк — худшее, что можно сделать с чужим файлом. */
+    const parts = [`Добавлено позиций: ${added}.`];
+    if (problems.length) {
+      parts.push(`Не разобрано строк: ${problems.length} — ${problems.slice(0, 3).join('; ')}`
+        + (problems.length > 3 ? ` и ещё ${problems.length - 3}.` : ''));
+    } else {
+      parts.push('Все строки разобраны.');
+    }
+    setCsvMsg({ cls: added ? 'c-2' : 'c-r', text: parts.join(' ') });
+  }
+
   if (loading) return <Loading text="Загрузка портфеля…" />;
   if (error) return <ErrorBox error={error} onRetry={load} />;
 
@@ -250,6 +405,36 @@ export default function PortfolioPage() {
           это «грязная» цена (с НКД), как в отчёте брокера.
         </div>
         {formErr && <div className="err" style={{ textAlign: 'left', paddingTop: 8 }}>{formErr}</div>}
+
+        {/* ── CSV: выгрузка и загрузка ────────────────────────────────
+            Это третье требование папы и последнее незакрытое. Выгрузка
+            идёт тем же форматом, что и в скринере («;» и BOM), — Excel
+            в русской локали откроет файл сразу. Загрузка терпимая:
+            принимает файл из банка, из другого сервиса и из своей
+            таблицы, а про непонятные строки говорит честно, а не молчит. */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', paddingTop: 14 }}>
+          <button className="btn btn-sm" type="button" onClick={exportCsv} disabled={!rows.length}>
+            ⤓ Выгрузить портфель в CSV
+          </button>
+          <label className="btn btn-sm" style={{ cursor: 'pointer' }}>
+            ⤒ Загрузить из CSV
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              style={{ display: 'none' }}
+              onChange={e => { importCsv(e.target.files?.[0]); e.target.value = ''; }}
+            />
+          </label>
+          <span className="c-3" style={{ fontSize: 11 }}>
+            формат: ISIN; Тикер; Название; Количество; Цена покупки; Дата покупки — как в выгрузке.
+            Позиции хранятся в браузере, загрузка добавляет их к уже введённым
+          </span>
+        </div>
+        {csvMsg && (
+          <div className={csvMsg.cls} style={{ fontSize: 11.5, paddingTop: 8, lineHeight: 1.6 }}>
+            {csvMsg.text}
+          </div>
+        )}
       </Panel>
 
       <div style={{ height: 14 }} />
