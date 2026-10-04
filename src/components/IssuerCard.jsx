@@ -133,6 +133,8 @@ export default function IssuerCard({
   emitterId,
   stats = [],
   period = null,
+  showBrief = false,   // попап: показать и блок «О компании», а не только таблицы
+  onExpand,            // страница выпуска: кнопка, открывающая карточку окном
 }) {
   const card = variant === 'card';
   const form = orgForm(title);
@@ -154,35 +156,95 @@ export default function IssuerCard({
   const years = girbo?.years || [];
   const latest = years[0] || null;
 
+  /* ── Куски, общие для карточки и попапа ───────────────────────────
+     Текст берём отсюда в оба места: расходиться им нельзя. */
+  const head = (
+    <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {rating
+        ? <RatingTag rating={rating} code={ratingCode} />
+        : <span className="c-3" style={{ fontSize: 11 }}>рейтинга в источниках нет</span>}
+      <span className="c-3" style={{ fontSize: 11 }}>MOEX · smart-lab · ГИР БО ФНС</span>
+    </span>
+  );
+
+  /* Кто за бумагой — до цифр: у СФО и ипотечного агента своего бизнеса
+     нет, и метрики МСФО по такой компании не найдутся. Внутри самого
+     попапа на карточку не ссылаемся — она и есть то, что открыто. */
+  const fact = (
+    <div className="c-2" style={{ fontSize: 12.5, lineHeight: 1.75 }}>
+      {form
+        ? <>Это <b>{form.label}</b>. {form.note}</>
+        : <>
+          <b>{short || 'Эмитент'}</b> — организация, выпустившая бумагу.{' '}
+          {showBrief
+            ? 'Ниже — метрики её отчётности и рейтинг выпуска, реквизиты и отчётность.'
+            : 'Ниже — метрики её отчётности и рейтинг выпуска, реквизиты и отчётность — в карточке предприятия.'}
+        </>}
+    </div>
+  );
+
+  /* ── Метрики отчётности плитками ─────────────────────────────────
+     Тот же светофор и те же три показателя, что в карточке у
+     оригинала: долг к EBITDA, маржа по EBITDA и чистая маржа.
+     Значения считает lib/ratios — здесь только показ. */
+  const briefBlock = (
+    <>
+      {stats.length > 0 && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginTop: 12 }}>
+            {stats.map(s => (
+              <div key={s.key} className="kpi-card" title={s.hint} style={{ cursor: 'help' }}>
+                <div className="kpi-l">{s.label}</div>
+                <div className={'kpi-v ' + TONE_CLS[s.tone]}>
+                  {nf(s.value, s.unit === '%' ? 1 : 2)}
+                  <span style={{ fontSize: 13 }}>{s.unit}</span>
+                </div>
+                <div className="kpi-s">
+                  <span className={TONE_CLS[s.tone]}>●</span> {TONE_LABEL[s.tone]} · {s.year}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 11, fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            <span><span className="c-g">●</span> в норме</span>
+            <span><span className="c-a">●</span> внимание</span>
+            <span><span className="c-r">●</span> риск</span>
+            <span className="c-3">серые — данных нет</span>
+          </div>
+          <div className="c-3" style={{ fontSize: 10.5, marginTop: 8, lineHeight: 1.6 }}>
+            Цифры — из отчётности МСФО (smart-lab.ru), цвет — наша оценка порогов, а не факт из отчёта:
+            границы «нормы» зависят от отрасли. Наведите курсор на метрику — в подсказке, что она значит.
+          </div>
+        </>
+      )}
+
+      {/* ── Отчётность одной строкой ────────────────────────────────
+          Если МСФО по компании нет (так у СФО и у банков), показываем
+          то, что есть: РСБУ из ГИР БО. Прочерк вместо цифры честнее
+          пустого места. */}
+      {period
+        ? <PeriodLine period={period} />
+        : latest ? (
+          <div style={{ fontSize: 12, lineHeight: 1.75, marginTop: 12 }}>
+            <span className="c-3" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.4px' }}>
+              Отчётность РСБУ
+            </span>
+            {' '}· ГИР БО ФНС · {latest.year} · выручка {money(latest.revenue)} · активы {money(latest.assets)}
+            {girboDate ? <span className="c-3"> · данные от {dateTime(girboDate)}</span> : null}
+          </div>
+        ) : null}
+    </>
+  );
+
   /* ══════════════════ Карточка на странице выпуска ══════════════════ */
   if (card) {
     return (
-      <Panel
-        title="О компании"
-        style={{ marginBottom: 14 }}
-        right={
-          <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {rating
-              ? <RatingTag rating={rating} code={ratingCode} />
-              : <span className="c-3" style={{ fontSize: 11 }}>рейтинга в источниках нет</span>}
-            <span className="c-3" style={{ fontSize: 11 }}>MOEX · smart-lab · ГИР БО ФНС</span>
-          </span>
-        }
-      >
-        {/* Кто за бумагой — до цифр: у СФО и ипотечного агента своего
-            бизнеса нет, и метрики МСФО по такой компании не найдутся. */}
-        <div className="c-2" style={{ fontSize: 12.5, lineHeight: 1.75 }}>
-          {form
-            ? <>Это <b>{form.label}</b>. {form.note}</>
-            : <>
-              <b>{short || 'Эмитент'}</b> — организация, выпустившая бумагу.
-              Ниже — метрики её отчётности и рейтинг выпуска, подробности и реквизиты — на странице эмитента.
-            </>}
-        </div>
+      <Panel title="О компании" style={{ marginBottom: 14 }} right={head}>
+        {fact}
 
         {/* Идентификаторы одной строкой: ИНН нужен, чтобы сверить компанию
-            в ГИР БО или у брокера, а таблице реквизитов на карточке
-            выпуска места нет — она на странице эмитента. */}
+            в ГИР БО или у брокера. Полная таблица реквизитов — в карточке
+            предприятия, она открывается кнопкой ниже. */}
         <div className="c-3" style={{ fontSize: 11.5, marginTop: 7, lineHeight: 1.7 }}>
           {inn ? <>ИНН {inn}</> : null}
           {ogrn ? <> · ОГРН {ogrn}</> : null}
@@ -192,58 +254,22 @@ export default function IssuerCard({
             : null}
         </div>
 
-        {/* ── Метрики отчётности плитками ─────────────────────────────
-            Тот же светофор и те же три показателя, что в карточке у
-            оригинала: долг к EBITDA, маржа по EBITDA и чистая маржа.
-            Значения считает Fundamentals — здесь только показ. */}
-        {stats.length > 0 && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginTop: 12 }}>
-              {stats.map(s => (
-                <div key={s.key} className="kpi-card" title={s.hint} style={{ cursor: 'help' }}>
-                  <div className="kpi-l">{s.label}</div>
-                  <div className={'kpi-v ' + TONE_CLS[s.tone]}>
-                    {nf(s.value, s.unit === '%' ? 1 : 2)}
-                    <span style={{ fontSize: 13 }}>{s.unit}</span>
-                  </div>
-                  <div className="kpi-s">
-                    <span className={TONE_CLS[s.tone]}>●</span> {TONE_LABEL[s.tone]} · {s.year}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 11, fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-              <span><span className="c-g">●</span> в норме</span>
-              <span><span className="c-a">●</span> внимание</span>
-              <span><span className="c-r">●</span> риск</span>
-              <span className="c-3">серые — данных нет</span>
-            </div>
-            <div className="c-3" style={{ fontSize: 10.5, marginTop: 8, lineHeight: 1.6 }}>
-              Цифры — из отчётности МСФО (smart-lab.ru), цвет — наша оценка порогов, а не факт из отчёта:
-              границы «нормы» зависят от отрасли. Наведите курсор на метрику — в подсказке, что она значит.
-            </div>
-          </>
-        )}
-
-        {/* ── Отчётность одной строкой ────────────────────────────────
-            Если МСФО по компании нет (так у СФО и у банков), показываем
-            то, что есть: РСБУ из ГИР БО. Прочерк вместо цифры честнее
-            пустого места. */}
-        {period
-          ? <PeriodLine period={period} />
-          : latest ? (
-            <div style={{ fontSize: 12, lineHeight: 1.75, marginTop: 12 }}>
-              <span className="c-3" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.4px' }}>
-                Отчётность РСБУ
-              </span>
-              {' '}· ГИР БО ФНС · {latest.year} · выручка {money(latest.revenue)} · активы {money(latest.assets)}
-              {girboDate ? <span className="c-3"> · данные от {dateTime(girboDate)}</span> : null}
-            </div>
-          ) : null}
+        {briefBlock}
 
         {/* Куда идти дальше — зелёной кнопкой, как «Полный разбор» в их
-            карточке: на карточке выпуска это главное действие. */}
+            карточке: на карточке выпуска это главное действие. Кнопка
+            «Карточка предприятия» открывает окно с реквизитами и
+            отчётностью — как в оригинале, вместо второй страницы. */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          {onExpand ? (
+            <button
+              className="btn btn-sm"
+              onClick={onExpand}
+              title="Открыть карточку предприятия отдельным окном"
+            >
+              Карточка предприятия ⤢
+            </button>
+          ) : null}
           {issuerKey ? (
             <Link className="btn btn-sm btn-green" to={'/issuer/' + issuerKey}>
               Страница эмитента →
@@ -267,12 +293,24 @@ export default function IssuerCard({
     );
   }
 
-  /* ══════════════ Подробности на странице эмитента ══════════════════ */
+  /* ══════ Подробности: реквизиты, РСБУ, поручитель ════════════════ */
   const hasRequites = title || inn || ogrn || okpo || legalAddress || website || capitalization != null;
   const shownYears = years.slice(0, 6);
 
   return (
     <>
+      {/* ── О компании ─────────────────────────────────────────────
+          В попапе карточка начинается тем же блоком, что и на карточке
+          выпуска: кто это, метрики плитками, строка отчётности. Ниже —
+          реквизиты, РСБУ и поручитель, чтобы за ними не уходить на
+          другую страницу. */}
+      {showBrief ? (
+        <Panel title="О компании" right={head} style={{ marginBottom: 14 }}>
+          {fact}
+          {briefBlock}
+        </Panel>
+      ) : null}
+
       {/* ── Реквизиты ────────────────────────────────────────────── */}
       <Panel
         title={'Данные об эмитенте' + (short ? ' · ' + short : '')}
@@ -403,6 +441,11 @@ export default function IssuerCard({
         )}
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          {issuerKey ? (
+            <Link className="btn btn-sm btn-green" to={'/issuer/' + issuerKey}>
+              Страница эмитента →
+            </Link>
+          ) : null}
           {girbo?.girboId ? (
             <a className="btn btn-sm" href={girboUrl(girbo.girboId)} target="_blank" rel="noopener noreferrer">
               Открыть в ГИР БО ↗

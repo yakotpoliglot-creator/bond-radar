@@ -5,6 +5,7 @@ import { fetchBonds, fetchBondCard, fetchIssuerInfo, fetchEmitter, fetchGirboByI
 import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, RatingTag, timesWord } from '../components/ui';
 import YieldCalculator from '../components/YieldCalculator';
 import IssuerCard from '../components/IssuerCard';
+import Modal from '../components/Modal';
 import { ratioStats, latestPeriodLine } from '../lib/ratios';
 import { nf, money, date, dateShort, dateTime, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
 import { useFavorites } from '../lib/store';
@@ -54,6 +55,7 @@ export default function BondCard() {
   const [girboDate, setGirboDate] = useState(null); // когда робот собрал girbo.json
   const [emitter, setEmitter] = useState(null);     // реестр MOEX: ОГРН, адрес, сайт, капитализация
   const [fdata, setFdata] = useState(null);         // МСФО smart-lab — грузится фоном, для плиток метрик
+  const [cardOpen, setCardOpen] = useState(false);  // карточка предприятия — окном, как в оригинале
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -433,11 +435,11 @@ export default function BondCard() {
 
       {/* ── Карточка предприятия ─────────────────────────────────────
           Как в оригинале: на карточке выпуска стоит короткая карточка
-          «О компании» — кто за бумагой, метрики отчётности плитками и
-          зелёная кнопка на страницу эмитента. Таблиц реквизитов и
-          отчётности здесь нет: они на странице эмитента, а не на
-          карточке бумаги. Прозу про бизнес и риски не пишем — заказчик
-          просил редакционное не делать. */}
+          «О компании» — кто за бумагой и метрики отчётности плитками, —
+          а полная карточка с реквизитами и отчётностью открывается
+          окном (кнопка «Карточка предприятия»), а не второй страницей.
+          Прозу про бизнес и риски не пишем — заказчик просил
+          редакционное не делать. */}
       <IssuerCard
         variant="card"
         title={emitter?.title || issuer?.title}
@@ -454,7 +456,45 @@ export default function BondCard() {
         issuerKey={bond?.issuerKey}
         stats={stats}
         period={period}
+        onExpand={() => setCardOpen(true)}
       />
+
+      {/* ── Та же карточка окном ─────────────────────────────────────
+          Один компонент на два вида: короткая карточка выше и подробная
+          в окне. Текст рисует один код, поэтому карточка на странице и
+          в окне не могут разойтись. */}
+      <Modal
+        open={cardOpen}
+        onClose={() => setCardOpen(false)}
+        title={emitter?.shortTitle || emitter?.title || issuer?.title || 'Карточка предприятия'}
+        subtitle={'Карточка предприятия' + (emitter?.inn || issuer?.inn ? ` · ИНН ${emitter?.inn || issuer?.inn}` : '')}
+      >
+        <IssuerCard
+          variant="detail"
+          showBrief
+          title={emitter?.title || issuer?.title}
+          shortTitle={emitter?.shortTitle}
+          inn={emitter?.inn || issuer?.inn}
+          ogrn={emitter?.ogrn}
+          okpo={emitter?.okpo}
+          country={emitter?.country}
+          legalAddress={emitter?.legalAddress}
+          postalAddress={emitter?.postalAddress}
+          website={emitter?.website}
+          capitalization={emitter?.capitalization}
+          emitterCapitalization={emitter?.emitterCapitalization}
+          capitalUpdatedAt={emitter?.capitalizationUpdatedAt}
+          rating={bond?.rating}
+          ratingCode={bond?.ratingCode}
+          bonds={bond ? [bond] : []}
+          girbo={girbo}
+          girboDate={girboDate}
+          issuerKey={bond?.issuerKey}
+          emitterId={issuer?.id ?? emitter?.id}
+          stats={stats}
+          period={period}
+        />
+      </Modal>
 
       {/* ── Калькулятор: «у меня есть сумма и срок» ────────────────
           Считает на уже загруженных данных выпуска, без новых запросов.

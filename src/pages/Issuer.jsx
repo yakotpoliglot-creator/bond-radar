@@ -4,6 +4,8 @@ import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboD
 import { BondTable, Panel, Kpi, Loading, ErrorBox } from '../components/ui';
 import Fundamentals from '../components/Fundamentals';
 import IssuerCard from '../components/IssuerCard';
+import Modal from '../components/Modal';
+import { ratioStats, latestPeriodLine } from '../lib/ratios';
 import { nf, money, dateShort } from '../lib/format';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -25,6 +27,12 @@ export default function Issuer() {
   /* МСФО-отчётность компании со smart-lab: находится по названию
      эмитента среди собранных тикеров акций. Только точное совпадение. */
   const [fdata, setFdata] = useState(null);
+  const [cardOpen, setCardOpen] = useState(false);   // карточка предприятия — окном
+
+  /* Плитки для окна считает тот же модуль порогов (lib/ratios), что и
+     панель коэффициентов ниже: цвет карточки и панели не разойдётся. */
+  const popupStats = useMemo(() => ratioStats(fdata?.data?.fin), [fdata]);
+  const popupPeriod = useMemo(() => latestPeriodLine(fdata?.data?.q), [fdata]);
   const [passport, setPassport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -226,8 +234,18 @@ export default function Issuer() {
           код эмитента <span className="mono">{key}</span>
           {info?.inn ? <> · ИНН <span className="mono">{info.inn}</span></> : null}
         </div>
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to="/issuers">← Все эмитенты</Link>
+          {/* Карточка предприятия — окном, как в оригинале: раньше она
+              стояла прямо на этой странице и дублировала карточку
+              выпуска. */}
+          <button
+            className="btn btn-sm"
+            onClick={() => setCardOpen(true)}
+            title="Открыть карточку предприятия отдельным окном"
+          >
+            Карточка предприятия ⤢
+          </button>
         </div>
       </div>
 
@@ -348,32 +366,42 @@ export default function Issuer() {
       </Panel>
 
 
-      {/* ── Эмитент: реквизиты и отчётность ─────────────────────────
-          Тот же компонент, что стоит короткой карточкой на странице
-          выпуска, но здесь подробный вид: таблицы реквизитов и РСБУ.
-          Плиток метрик у него нет намеренно — сразу ниже полная
-          отчётность МСФО с коэффициентами, дублировать её незачем. */}
-      <IssuerCard
-        variant="detail"
-        title={emitter?.title || info?.title}
-        shortTitle={emitter?.shortTitle}
-        inn={emitter?.inn || info?.inn}
-        ogrn={emitter?.ogrn}
-        okpo={emitter?.okpo}
-        country={emitter?.country}
-        legalAddress={emitter?.legalAddress}
-        postalAddress={emitter?.postalAddress}
-        website={emitter?.website}
-        capitalization={emitter?.capitalization}
-        emitterCapitalization={emitter?.emitterCapitalization}
-        capitalUpdatedAt={emitter?.capitalizationUpdatedAt}
-        rating={bestRating?.rating}
-        ratingCode={bestRating?.ratingCode}
-        bonds={bonds}
-        girbo={girbo}
-        girboDate={girboDate}
-        emitterId={info?.id ?? emitter?.id}
-      />
+      {/* ── Карточка предприятия окном ──────────────────────────────
+          Тот же компонент, что и на карточке выпуска: блок «О компании»
+          плюс реквизиты, РСБУ и строка про поручителя. Раньше этот блок
+          стоял прямо здесь и дублировался на карточке выпуска — теперь
+          он один и открывается окном. */}
+      <Modal
+        open={cardOpen}
+        onClose={() => setCardOpen(false)}
+        title={emitter?.shortTitle || emitter?.title || info?.title || 'Карточка предприятия'}
+        subtitle={'Карточка предприятия' + (info?.inn || emitter?.inn ? ` · ИНН ${info?.inn || emitter?.inn}` : '')}
+      >
+        <IssuerCard
+          variant="detail"
+          showBrief
+          title={emitter?.title || info?.title}
+          shortTitle={emitter?.shortTitle}
+          inn={emitter?.inn || info?.inn}
+          ogrn={emitter?.ogrn}
+          okpo={emitter?.okpo}
+          country={emitter?.country}
+          legalAddress={emitter?.legalAddress}
+          postalAddress={emitter?.postalAddress}
+          website={emitter?.website}
+          capitalization={emitter?.capitalization}
+          emitterCapitalization={emitter?.emitterCapitalization}
+          capitalUpdatedAt={emitter?.capitalizationUpdatedAt}
+          rating={bestRating?.rating}
+          ratingCode={bestRating?.ratingCode}
+          bonds={bonds}
+          girbo={girbo}
+          girboDate={girboDate}
+          emitterId={info?.id ?? emitter?.id}
+          stats={popupStats}
+          period={popupPeriod}
+        />
+      </Modal>
 
       {/* ── МСФО компании со smart-lab ────────────────────────────── *
        * Показываем перед бухгалтерской отчётностью: МСФО богаче —
