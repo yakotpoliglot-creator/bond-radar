@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
-import { fetchBonds, fetchBondCard, fetchIssuerInfo, moexReportsUrl, moexIssueUrl } from '../api/moex';
+import { fetchBonds, fetchBondCard, fetchIssuerInfo, fetchGirboByInn, fetchGirboDate, girboUrl, moexReportsUrl, moexIssueUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, RatingTag, timesWord } from '../components/ui';
 import YieldCalculator from '../components/YieldCalculator';
 import { nf, money, date, dateShort, dateTime, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
@@ -29,6 +29,15 @@ function cssVar(name, fallback) {
   } catch { return fallback; }
 }
 
+/** Согласование числительного с существительным: «41 выплата», «5 выплат».
+    Нужно для подписи графика купонов — «41 купонов» читать нельзя. */
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
 /** Колонки мини-таблиц похожих выпусков. */
 const SIMILAR_COLS = ['name', 'ytm', 'coupon', 'price', 'duration', 'mat', 'offer', 'level'];
 
@@ -39,6 +48,8 @@ export default function BondCard() {
   const [bonds, setBonds] = useState([]);
   const [card, setCard] = useState(null);
   const [issuer, setIssuer] = useState(null);
+  const [girbo, setGirbo] = useState(null);        // отчётность эмитента, ГИР БО ФНС
+  const [girboDate, setGirboDate] = useState(null); // когда робот собрал girbo.json
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -48,7 +59,7 @@ export default function BondCard() {
   /* ── загрузка данных ───────────────────────────────────────────── */
   useEffect(() => {
     let alive = true;
-    setLoading(true); setError(null); setCard(null); setIssuer(null);
+    setLoading(true); setError(null); setCard(null); setIssuer(null); setGirbo(null);
 
     (async () => {
       try {
@@ -72,6 +83,18 @@ export default function BondCard() {
 
     return () => { alive = false; };
   }, [id]);
+
+  /* ── отчётность эмитента: ГИР БО ФНС по ИНН ──────────────────────
+     Ждём именно ИНН из fetchIssuerInfo: по названию организация в
+     реестре не ищется, и ошибка здесь означала бы чужие цифры в
+     карточке выпуска. Пока ИНН нет — просто ничего не показываем. */
+  useEffect(() => {
+    if (!issuer?.inn) return;
+    let alive = true;
+    fetchGirboByInn(issuer.inn).then(r => { if (alive) setGirbo(r); }).catch(() => {});
+    fetchGirboDate().then(d => { if (alive) setGirboDate(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, [issuer?.inn]);
 
   /** Бумага в общем списке (TQCB + TQOB) по ISIN или SECID. */
   const bond = useMemo(() => {
@@ -238,6 +261,11 @@ export default function BondCard() {
 
   const today = todayStr();
 
+  /* Ближайшая будущая выплата — отмечаем её в графике: у длинных
+     выпусков (у СФО бывает 40+ строк) иначе не видно, что платят
+     следующим, а именно это и ищут глазами. */
+  const nextCouponDate = couponsSorted.find(c => c.date >= today)?.date ?? null;
+
   return (
     <div>
       {/* ── Шапка выпуска ─────────────────────────────────────────── */}
@@ -365,6 +393,81 @@ export default function BondCard() {
         />
       </div>
 
+      {/* ── Финансы того, кто отвечает по выпуску ───────────────────
+          По образцу платного скринера здесь стоит блок про финансы
+          эмитента. У нас это отчётность самого юридического лица из
+          ГИР БО ФНС (по ИНН). Про поручителя и группу говорим прямо:
+          этих данных нет в открытых источниках, а дорисовать их «по
+          смыслу» — значит выдать догадку за факт. */}
+      {girbo && !girbo.closed && girbo.years?.length ? (
+        <Panel
+          title={'Финансы эмитента · ' + (issuer?.title ? issuer.title : 'ГИР БО ФНС')}
+          style={{ marginBottom: 14 }}
+          right={<span className="c-3" style={{ fontSize: 11 }}>
+            РСБУ, ГИР БО ФНС{girboDate ? ` · данные от ${dateTime(girboDate)}` : ''}
+          </span>}
+        >
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th className="nosort">Год</th>
+                  <th className="nosort">Выручка</th>
+                  <th className="nosort">Активы</th>
+                  <th className="nosort">Опубликовано</th>
+                </tr>
+              </thead>
+              <tbody>
+                {girbo.years.slice(0, 5).map(y => (
+                  <tr key={y.year} style={{ cursor: 'default' }}>
+                    <td className="mono" style={{ fontWeight: 600 }}>{y.year}</td>
+                    <td className="mono">{money(y.revenue)}</td>
+                    <td className="mono">{money(y.assets)}</td>
+                    <td className="c-3" style={{ fontSize: 11 }}>{y.publishedAt ? dateShort(y.publishedAt) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7, marginTop: 12 }}>
+            Это отчётность <b>самого юридического лица-эмитента по РСБУ</b>, а не группы.
+            У выпусков, которые делают через техническую компанию группы (СФО), собственных
+            оборотов обычно нет — и тогда цифры выше о риске бумаги почти ничего не говорят.
+            <br />
+            <b>Чего здесь нет:</b> поручителя, обеспечения и консолидированной отчётности группы.
+            Биржа такого не публикует, а по ISIN организация в ГИР БО не ищется — там поиск по ИНН.
+            Поэтому мы показываем то, что можно проверить, и не пишем «надёжно», не зная,
+            кто отвечает по выпуску.
+            {girbo.name ? <span className="c-3"> Организация в реестре: {girbo.name}.</span> : null}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+            <a className="btn btn-sm" href={girboUrl(girbo.girboId)} target="_blank" rel="noopener noreferrer">
+              Открыть в ГИР БО ↗
+            </a>
+            {bond?.issuerKey && (
+              <Link className="btn btn-sm" to={'/issuer/' + bond.issuerKey}>
+                Отчётность и выпуски эмитента →
+              </Link>
+            )}
+          </div>
+        </Panel>
+      ) : (
+        <Panel title="Финансы эмитента" style={{ marginBottom: 14 }}>
+          <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
+            {issuer?.inn
+              ? (girbo?.closed
+                ? 'Организация закрыла свою отчётность от публичного доступа в ГИР БО ФНС. Это её право, и обходить ограничение мы не будем.'
+                : 'Отчётности этого эмитента в ГИР БО ФНС нет: робот не нашёл её по ИНН. Организация могла сдать отчётность позже остальных или не сдавать её вовсе.')
+              : 'ИНН эмитента биржа по этому выпуску не отдала, а по названию организация в ГИР БО не ищется — ошибёшься и покажешь чужие цифры. Финансовых показателей по этой бумаге у нас нет.'}
+            <br />
+            <b>Поручителя, обеспечения и отчётности группы здесь нет ни у кого:</b> биржа таких
+            данных не публикует, а по ISIN ГИР БО организацию не находит.
+          </div>
+        </Panel>
+      )}
+
       {/* ── Калькулятор: «у меня есть сумма и срок» ────────────────
           Считает на уже загруженных данных выпуска, без новых запросов.
           График купонов передаём внутрь: по нему суммы выплат точнее,
@@ -392,8 +495,13 @@ export default function BondCard() {
 
       {/* ── Купоны, амортизация, оферты ───────────────────────────── */}
       <Panel title="Купоны и амортизация" pad={false} style={{ marginBottom: 14 }}
-        right={<span className="c-3" style={{ fontSize: 11 }}>
-          {(card?.coupons || []).length} купонов{card?.couponsCapped ? ', показаны не все' : ''}
+        right={<span className="c-3" style={{ fontSize: 11, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span>
+            {(card?.coupons || []).length}{' '}
+            {plural((card?.coupons || []).length, 'выплата', 'выплаты', 'выплат')}
+            {card?.couponsCapped ? ', показаны не все' : ''}
+          </span>
+          <span className="tag" style={{ fontSize: 10 }} title="Данные Московской биржи (ISS)">ISS</span>
         </span>}>
         {card?.couponsCapped && (
           <div className="c-3" style={{ fontSize: 10.5, padding: '8px 12px 0', lineHeight: 1.6 }}>
@@ -406,6 +514,7 @@ export default function BondCard() {
           <table className="tbl">
             <thead>
               <tr>
+                <th className="nosort">№</th>
                 <th className="nosort">Дата купона</th>
                 <th className="nosort">Размер, ₽</th>
                 <th className="nosort">% от номинала</th>
@@ -414,15 +523,18 @@ export default function BondCard() {
               </tr>
             </thead>
             <tbody>
-              {(card?.coupons || []).map(c => {
+              {(card?.coupons || []).map((c, idx) => {
                 const isPast = c.date && c.date < today;
                 return (
                   <tr key={'c' + c.date} className={isPast ? 'c-3' : ''}>
+                    <td className="mono c-3" style={{ fontSize: 11 }}>{idx + 1}</td>
                     <td className="mono">{date(c.date)}</td>
                     <td className="mono">{c.value == null ? '—' : nf(c.value, 2)}</td>
                     <td className="mono">{c.valuePrc == null ? '—' : nf(c.valuePrc, 2) + '%'}</td>
                     <td className="mono c-2">{c.faceValue == null ? '—' : nf(c.faceValue, 2)}</td>
-                    <td className="c-3" style={{ fontSize: 11 }}>{isPast ? 'выплачен' : 'предстоит'}</td>
+                    <td className="c-3" style={{ fontSize: 11 }}>
+                      {isPast ? 'выплачен' : (c.date === nextCouponDate ? 'ближайшая' : 'предстоит')}
+                    </td>
                   </tr>
                 );
               })}
