@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
-import { fetchBonds, fetchBondCard, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboDate, moexReportsUrl, moexIssueUrl } from '../api/moex';
+import { fetchBonds, fetchBondCard, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboDate, fetchFundamentals, findIssuerFundamentals, moexReportsUrl, moexIssueUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, RatingTag, timesWord } from '../components/ui';
 import YieldCalculator from '../components/YieldCalculator';
 import IssuerCard from '../components/IssuerCard';
+import { ratioStats, latestPeriodLine } from '../lib/ratios';
 import { nf, money, date, dateShort, dateTime, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
@@ -52,6 +53,7 @@ export default function BondCard() {
   const [girbo, setGirbo] = useState(null);        // отчётность эмитента, ГИР БО ФНС
   const [girboDate, setGirboDate] = useState(null); // когда робот собрал girbo.json
   const [emitter, setEmitter] = useState(null);     // реестр MOEX: ОГРН, адрес, сайт, капитализация
+  const [fdata, setFdata] = useState(null);         // МСФО smart-lab — грузится фоном, для плиток метрик
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -113,6 +115,30 @@ export default function BondCard() {
     const key = (id || '').toUpperCase();
     return bonds.find(b => b.isin === key || b.secid === key) || null;
   }, [bonds, id]);
+
+  /* ── МСФО компании: метрики для карточки предприятия ──────────────
+     Файл со всей отчётностью весит 2,5 МБ, поэтому грузим его фоном и
+     не ждём: карточка сначала показывает реквизиты и РСБУ из ГИР БО, а
+     плитки метрик появляются, когда файл доехал. Браузер кэширует его —
+     тот же файл читает страница эмитента, так что платим один раз на
+     весь сайт. Матчим по названию: у эмитента облигаций тикера нет. */
+  useEffect(() => {
+    let alive = true;
+    fetchFundamentals()
+      .then(f => {
+        if (!alive) return;
+        setFdata(findIssuerFundamentals(f, [
+          emitter?.title, emitter?.shortTitle, issuer?.title, issuer?.name, bond?.name,
+        ]));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [emitter?.title, emitter?.shortTitle, issuer?.title, issuer?.name, bond?.name]);
+
+  /* Тот же светофор и те же пороги, что в панели коэффициентов
+     страницы эмитента: считает Fundamentals, карточка только показывает. */
+  const stats = useMemo(() => ratioStats(fdata?.data?.fin), [fdata]);
+  const period = useMemo(() => latestPeriodLine(fdata?.data?.q), [fdata]);
 
   const isFav = bond ? has(bond.isin) : false;
 
@@ -406,31 +432,28 @@ export default function BondCard() {
       </div>
 
       {/* ── Карточка предприятия ─────────────────────────────────────
-          По образцу платного скринера: у них над ценой стоит блок
-          «О компании» и панель «Финансы группы · поручитель». Прозу про
-          бизнес и риски мы не пишем — заказчик просил редакционное не
-          делать. Вместо неё проверяемые поля и честная строка о том, где
-          поручитель указан на самом деле. Компонент общий со страницей
-          эмитента, compact — три года отчётности вместо шести. */}
+          Как в оригинале: на карточке выпуска стоит короткая карточка
+          «О компании» — кто за бумагой, метрики отчётности плитками и
+          зелёная кнопка на страницу эмитента. Таблиц реквизитов и
+          отчётности здесь нет: они на странице эмитента, а не на
+          карточке бумаги. Прозу про бизнес и риски не пишем — заказчик
+          просил редакционное не делать. */}
       <IssuerCard
-        compact
+        variant="card"
         title={emitter?.title || issuer?.title}
         shortTitle={emitter?.shortTitle}
         inn={emitter?.inn || issuer?.inn}
         ogrn={emitter?.ogrn}
-        okpo={emitter?.okpo}
         country={emitter?.country}
-        legalAddress={emitter?.legalAddress}
         website={emitter?.website}
-        capitalization={emitter?.capitalization}
-        emitterCapitalization={emitter?.emitterCapitalization}
-        capitalUpdatedAt={emitter?.capitalizationUpdatedAt}
         rating={bond?.rating}
         ratingCode={bond?.ratingCode}
         bonds={bond ? [bond] : []}
         girbo={girbo}
         girboDate={girboDate}
         issuerKey={bond?.issuerKey}
+        stats={stats}
+        period={period}
       />
 
       {/* ── Калькулятор: «у меня есть сумма и срок» ────────────────

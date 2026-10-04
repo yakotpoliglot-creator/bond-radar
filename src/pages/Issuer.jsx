@@ -260,34 +260,6 @@ export default function Issuer() {
           : null}
       </div>
 
-      {/* ── Карточка предприятия ─────────────────────────────────────
-          Тот же компонент, что и в карточке выпуска (components/IssuerCard):
-          реквизиты из реестра MOEX, рейтинг из таблицы, которая кормит
-          скринер, отчётность РСБУ из ГИР БО ФНС и прямая строка про
-          поручителя. Раньше здесь были две отдельные панели с теми же
-          данными — и они расходились с карточкой выпуска. */}
-      <IssuerCard
-        title={emitter?.title || info?.title}
-        shortTitle={emitter?.shortTitle}
-        inn={emitter?.inn || info?.inn}
-        ogrn={emitter?.ogrn}
-        okpo={emitter?.okpo}
-        country={emitter?.country}
-        legalAddress={emitter?.legalAddress}
-        postalAddress={emitter?.postalAddress}
-        website={emitter?.website}
-        capitalization={emitter?.capitalization}
-        emitterCapitalization={emitter?.emitterCapitalization}
-        capitalUpdatedAt={emitter?.capitalizationUpdatedAt}
-        rating={bestRating?.rating}
-        ratingCode={bestRating?.ratingCode}
-        bonds={bonds}
-        girbo={girbo}
-        girboDate={girboDate}
-        issuerKey={key}
-        emitterId={info?.id ?? emitter?.id}
-      />
-
       {/* ── Сводка ────────────────────────────────────────────────── */}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 14 }}>
         <Kpi label="Выпусков" value={nf(summary.count, 0)} sub={`показано ${filtered.length}`} />
@@ -375,6 +347,33 @@ export default function Issuer() {
         />
       </Panel>
 
+
+      {/* ── Эмитент: реквизиты и отчётность ─────────────────────────
+          Тот же компонент, что стоит короткой карточкой на странице
+          выпуска, но здесь подробный вид: таблицы реквизитов и РСБУ.
+          Плиток метрик у него нет намеренно — сразу ниже полная
+          отчётность МСФО с коэффициентами, дублировать её незачем. */}
+      <IssuerCard
+        variant="detail"
+        title={emitter?.title || info?.title}
+        shortTitle={emitter?.shortTitle}
+        inn={emitter?.inn || info?.inn}
+        ogrn={emitter?.ogrn}
+        okpo={emitter?.okpo}
+        country={emitter?.country}
+        legalAddress={emitter?.legalAddress}
+        postalAddress={emitter?.postalAddress}
+        website={emitter?.website}
+        capitalization={emitter?.capitalization}
+        emitterCapitalization={emitter?.emitterCapitalization}
+        capitalUpdatedAt={emitter?.capitalizationUpdatedAt}
+        rating={bestRating?.rating}
+        ratingCode={bestRating?.ratingCode}
+        bonds={bonds}
+        girbo={girbo}
+        girboDate={girboDate}
+        emitterId={info?.id ?? emitter?.id}
+      />
 
       {/* ── МСФО компании со smart-lab ────────────────────────────── *
        * Показываем перед бухгалтерской отчётностью: МСФО богаче —

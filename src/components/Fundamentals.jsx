@@ -1,5 +1,6 @@
 import { nf, chgClass, chgArrow } from '../lib/format';
 import { Panel } from './ui';
+import { RATIOS, TONE_LABEL, latest } from '../lib/ratios';
 
 /* ═══════════════════════════════════════════════════════════════════
    Финансовая отчётность и коэффициенты — данные smart-lab.ru
@@ -102,86 +103,15 @@ const GROUPS = [
   },
 ];
 
-/* ── Светофор по коэффициентам ──────────────────────────────────────
-   tone(v) → 'good' | 'warn' | 'bad' | 'na'
-   Пороги подобраны как ориентир «дорого/нормально/дёшево» и
-   «крепко/терпимо/рискованно». Это не рекомендация. */
-const RATIOS = [
-  {
-    key: 'pe', label: 'P/E', unit: '×',
-    hint: 'Цена / годовая прибыль. Сколько лет прибыли стоит компания',
-    tone: v => (v == null ? 'na' : v <= 0 ? 'na' : v < 8 ? 'good' : v < 20 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'evEbitda', label: 'EV/EBITDA', unit: '×',
-    hint: 'Стоимость компании с долгом / EBITDA. Ниже — дешевле',
-    tone: v => (v == null ? 'na' : v <= 0 ? 'na' : v < 5 ? 'good' : v < 10 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'debtEbitda', label: 'Долг/EBITDA', unit: '×',
-    hint: 'Сколько лет EBITDA нужно, чтобы расплатиться со ВСЕМ долгом. '
-      + 'Считаем сами: в источнике под этой подписью лежит чистый долг',
-    tone: v => (v == null ? 'na' : v < 0 ? 'good' : v < 2 ? 'good' : v < 4 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'netDebtEbitda', label: 'Чистый долг/EBITDA', unit: '×',
-    hint: 'То же, но из долга вычтены деньги на счетах. Обычно главный '
-      + 'показатель нагрузки: отрицательный значит денег больше, чем долга',
-    tone: v => (v == null ? 'na' : v < 0 ? 'good' : v < 1.5 ? 'good' : v < 3 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'interestCoverage', label: 'Покрытие процентов', unit: '×',
-    hint: 'Сколько раз EBITDA покрывает проценты по долгу. Меньше 1,5 — '
-      + 'долг обслуживается на пределе',
-    tone: v => (v == null ? 'na' : v > 5 ? 'good' : v > 2 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'roe', label: 'ROE', unit: '%',
-    hint: 'Отдача на собственный капитал',
-    tone: v => (v == null ? 'na' : v > 15 ? 'good' : v > 5 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'roa', label: 'ROA', unit: '%',
-    hint: 'Отдача на все активы',
-    tone: v => (v == null ? 'na' : v > 8 ? 'good' : v > 3 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'ebitdaMargin', label: 'EBITDA-маржа', unit: '%',
-    hint: 'Доля EBITDA в выручке — операционная эффективность',
-    tone: v => (v == null ? 'na' : v > 20 ? 'good' : v > 10 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'netMargin', label: 'Чистая маржа', unit: '%',
-    hint: 'Доля чистой прибыли в выручке',
-    tone: v => (v == null ? 'na' : v > 10 ? 'good' : v > 3 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'ps', label: 'P/S', unit: '×',
-    hint: 'Капитализация / выручка',
-    tone: v => (v == null ? 'na' : v <= 0 ? 'na' : v < 1 ? 'good' : v < 3 ? 'warn' : 'bad'),
-  },
-  {
-    key: 'pbv', label: 'P/BV', unit: '×',
-    hint: 'Капитализация / балансовая стоимость. Ниже 1 — дешевле баланса',
-    tone: v => (v == null ? 'na' : v <= 0 ? 'na' : v < 1 ? 'good' : v < 3 ? 'warn' : 'bad'),
-  },
-];
 
-const TONE_LABEL = { good: 'в норме', warn: 'внимание', bad: 'риск', na: 'нет данных' };
 
-/** Значение метрики за самый свежий год, где оно есть. */
-function latest(metric) {
-  if (!metric?.values) return null;
-  const years = Object.keys(metric.values).sort();
-  const y = years[years.length - 1];
-  return y ? { year: y, value: metric.values[y] } : null;
-}
 
 /** Формат значения для таблицы: млрд ₽ — одним знаком, проценты — как есть. */
 function fmtVal(v, digits) {
   if (v == null) return '—';
   return nf(v, digits);
 }
+
 
 /**
  * Изменение к прошлому году в процентах — та самая «маленькая арифметика»,
