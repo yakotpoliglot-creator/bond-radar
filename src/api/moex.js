@@ -283,7 +283,12 @@ function normalize(s, m, y, board = 'TQCB') {
     couponKind: kind,
     isAmort,
     hasOffer: !!offerDate && s.BONDSUBTYPE !== 'До погашения',
-    isQualified: false,
+    /* Допуск выпуска: 1 — только для квалифицированных инвесторов, 0 — для
+       всех, null — биржа признак не отдала. В списочных блоках его нет, он
+       приходит из описания бумаги или из файла робота (см. withQual), поэтому
+       здесь именно null, а не «доступна всем»: непроверенное нельзя выдавать
+       за проверенное. */
+    isQualified: null,
     isCurrencyBond: (s.BONDTYPE || '').includes('Валютная'),
     /* Бессрочная бумага: даты погашения нет вовсе. Калькулятор не должен
        молча обещать возврат номинала в конце срока. */
@@ -456,6 +461,47 @@ async function withFx(list) {
   return list;
 }
 
+/* ── допуск выпусков: для квалифицированных или для всех ──────────── *
+ *
+ * Биржа публикует этот признак ТОЛЬКО в описании конкретной бумаги
+ * (/iss/securities/{SECID}.json, поле ISQUALIFIEDINVESTORS): ни в списочном
+ * блоке площадок, ни в агрегатном списке ISS его нет, пачкой он не отдаётся
+ * (проверено и записано отдельно). Поэтому около 3 100 выпусков обходит робот
+ * (scripts/qual.mjs) и кладёт рядом с сайтом файл public/qual.json — тем же
+ * приёмом, что рейтинги, ГИР БО и первичка.
+ *
+ * Пока файла нет (или в нём нет бумаги), признак остаётся null — «неизвестно».
+ * Это не то же самое, что «доступна всем»: null мы не подставляем ни в один из
+ * точных вариантов фильтра «Допуск» и честно говорим, сколько выпусков
+ * проверено.
+ */
+let qualCache;
+let qualPromise;
+
+/** Допуск по SECID: { bySecid: { SECID: 0|1 }, counts, coverage, generatedAt }. */
+export function fetchQual() {
+  if (qualCache) return Promise.resolve(qualCache);
+  if (!qualPromise) {
+    const base = import.meta.env?.BASE_URL || '/';
+    qualPromise = fetch(`${base}qual.json`, { credentials: 'omit' })
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then(d => { qualCache = d; return d; });
+  }
+  return qualPromise;
+}
+
+/** Проставляет выпускам допуск. Файла нет — оставляем null, страницы живут. */
+async function withQual(list) {
+  const data = await fetchQual();
+  const map = data?.bySecid;
+  if (!map) return list;
+  return list.map(b => {
+    const v = map[b.secid];
+    return { ...b, isQualified: v === 1 || v === '1' ? true : v === 0 || v === '0' ? false : null };
+  });
+}
+
 export function fetchBonds({ force = false } = {}) {
   if (force) { bondsCache = null; bondsPromise = null; }
   if (bondsCache) return Promise.resolve(bondsCache);
@@ -485,6 +531,7 @@ export function fetchBonds({ force = false } = {}) {
          файла нет — просто не будет рейтингов, страницы работать
          не перестанут. */
       .then(list => withRatings(list))
+      .then(list => withQual(list))
       .then(list => withFx(list))
       .catch(e => { bondsPromise = null; throw e; });
   }

@@ -129,6 +129,7 @@ const DEFAULT_FILTERS = {
   curMax: '',
   freq: 'all',         // частота купона
   currency: 'all',     // валюта номинала
+  access: 'all',       // допуск: all — все, any — для всех, qual — только для квалов
   onlyOnePerIssuer: false,  // не больше одного выпуска эмитента
   soonMaturity: false,      // погашение в ближайший год
   noAmort: false,           // без амортизации
@@ -269,6 +270,13 @@ function matchFilters(b, f) {
     }
   }
 
+  /* Допуск. Биржевой признак: 1 — выпуск только для квалифицированных,
+     0 — для всех, null — биржа его не отдала (робот ещё не собрал). null не
+     проходит ни один из точных вариантов: обещать «доступна всем» про
+     непроверенную бумагу нельзя. */
+  if (f.access === 'any' && b.isQualified !== false) return false;
+  if (f.access === 'qual' && b.isQualified !== true) return false;
+
   // Погашение в ближайший год
   if (f.soonMaturity) {
     if (!b.matDate) return false;
@@ -354,6 +362,11 @@ export default function Screener() {
   const [onlyFav, setOnlyFav] = useState(false);   // доп. фильтр «только избранное»
   const [page, setPage] = useState(1);
   const [popup, setPopup] = useState(null);        // быстрый просмотр бумаги окном
+
+  /* Сколько выпусков с уже проверенным допуском: признак собирает робот
+     (public/qual.json). Если файла ещё нет или он неполный, честно скажем,
+     у скольких выпусков биржа признак не отдала. */
+  const qualKnown = bonds.filter(b => b.isQualified != null).length;
   /* Режим отбора: свои фильтры или цель. В режиме цели ручные фильтры
      скрыты — как на образце: человек видит ровно те условия, которые
      задала цель, и не смешивает их со своими прошлыми экспериментами. */
@@ -831,6 +844,25 @@ export default function Screener() {
               <option value="EUR">Евро</option>
               <option value="CNY">Юань</option>
             </select>
+          </div>
+
+          <div className="fg">
+            <label>Допуск</label>
+            <select
+              className="sel"
+              value={filters.access}
+              onChange={e => set({ access: e.target.value })}
+              title="Биржевой признак «бумаги для квалифицированных инвесторов». Биржа публикует его по каждому выпуску отдельно; окончательно допуск определяет ваш брокер, а не сайт."
+            >
+              <option value="all">Все</option>
+              <option value="any">Для всех (не для квалов)</option>
+              <option value="qual">Только для квалифицированных</option>
+            </select>
+            {qualKnown < bonds.length && (
+              <div className="c-3" style={{ fontSize: 10.5 }}>
+                проверено {qualKnown} из {bonds.length}
+              </div>
+            )}
           </div>
 
           <CheckFilter

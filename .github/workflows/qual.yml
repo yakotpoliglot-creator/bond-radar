@@ -1,0 +1,79 @@
+name: Допуск выпусков (квалифицированные инвесторы)
+
+# Робот собирает биржевой признак «бумаги для квалифицированных инвесторов»
+# (ISQUALIFIEDINVESTORS). Он лежит ТОЛЬКО в описании конкретной бумаги:
+# /iss/securities/{SECID}.json — пачкой ISS его не отдаёт. Проверено трижды:
+# в списочном блоке площадок TQCB/TQOB (47 полей) признака нет, в агрегатном
+# /iss/securities.json (14 полей) нет, а параметры securities= и
+# iss.only=description там игнорируются. Один прогон — около 3 100 запросов,
+# это 4–6 минут с паузами и пятью потоками.
+#
+# Почему раз в сутки: допуск меняется редко (новый выпуск, перевод бумаги),
+# а лишние обращения к бирже ни к чему. Пульс против отключения расписания —
+# как у остальных роботов.
+
+on:
+  schedule:
+    - cron: '40 4 * * *'
+  # Правку самого робота проверяем сразу, а не на следующий день.
+  push:
+    paths:
+      - 'scripts/qual.mjs'
+      - '.github/workflows/qual.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qual
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    # Обход трёх тысяч описаний небыстрый: даём запас, чтобы раннер не снял
+    # задачу на середине.
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Пульс против отключения расписания: GitHub выключает запланированные
+      # workflow в публичном репозитории после 60 дней без коммитов.
+      - name: Пульс — не даём GitHub отключить расписание
+        run: echo "$(date -u +%Y-%m)" > .github/last-robot-run.txt
+
+      - name: Собрать допуск выпусков
+        run: node scripts/qual.mjs
+
+      # Данные коммитим даже при неполном прогоне: в файле есть coverage и
+      # partial, сайт по ним честно говорит, сколько выпусков проверено.
+      - name: Закоммитить изменения
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/qual.json .github/last-robot-run.txt
+          if git diff --staged --quiet; then
+            echo "Изменений нет — коммит не нужен."
+          else
+            git commit -m "Робот: допуск выпусков $(date -u +%Y-%m-%d)"
+            # Пуш может не пройти, если в ветку успел что-то положить другой
+            # робот или человек: git отвергает такой пуш целиком, и данные
+            # всего прогона теряются. Пробуем трижды, перебазируясь поверх
+            # того, что уже лежит в ветке.
+            for i in 1 2 3; do
+              if git push; then exit 0; fi
+              echo "Пуш не прошёл, попытка $i — перебазируемся"
+              git pull --rebase --autostash || git rebase --abort
+              sleep 5
+            done
+            echo "Не удалось запушить за три попытки"
+            exit 1
+          fi

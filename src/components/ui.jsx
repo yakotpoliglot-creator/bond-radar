@@ -126,7 +126,20 @@ const COLS = {
        а в списке из 3000 строк только мешал читать название. */
     cell: b => (
       <>
-        <div style={{ fontWeight: 600 }}>{b.shortname}</div>
+        <div style={{ fontWeight: 600 }}>
+          {b.shortname}
+          {/* Пометка биржевого допуска. Без неё строка выпуска, который
+              доступен только квалифицированным, выглядит как обычная бумага. */}
+          {b.isQualified === true && (
+            <span
+              className="tag a"
+              style={{ marginLeft: 6, fontSize: 10 }}
+              title="Выпуск предназначен только для квалифицированных инвесторов. Окончательно допуск определяет ваш брокер."
+            >
+              квал
+            </span>
+          )}
+        </div>
         <div className="c-3" style={{ fontSize: 10 }}>
           {b.isOfz ? 'гос · ОФЗ' : b.isSubfederal ? 'гос · регион' : 'корп'}
           {b.listLevel ? ` · ${b.listLevel} ур.` : ''}
