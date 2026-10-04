@@ -213,7 +213,7 @@ const COLS = {
 
 export const DEFAULT_COLS = ['name', 'rating', 'ytm', 'coupon', 'price', 'nkd', 'duration', 'mat', 'offer', 'level', 'turnover'];
 
-export function BondTable({ bonds, cols = DEFAULT_COLS, limit, linkTo = true, initialSort = 'ytm' }) {
+export function BondTable({ bonds, cols = DEFAULT_COLS, limit, linkTo = true, initialSort = 'ytm', onRow }) {
   const [sortKey, setSortKey] = useState(initialSort);
   const [asc, setAsc] = useState(false);
 
@@ -257,10 +257,20 @@ export function BondTable({ bonds, cols = DEFAULT_COLS, limit, linkTo = true, in
         </thead>
         <tbody>
           {rows.map(b => (
-            <tr key={b.secid} onClick={() => { if (linkTo) location.hash = '#/bond/' + b.isin; }}>
+            <tr
+              key={b.secid}
+              /* onRow — быстрый просмотр окном, как в оригинале: клик по
+                 строке списка открывает попап, а не уводит на страницу.
+                 Без onRow — прежний переход на карточку выпуска. */
+              onClick={() => {
+                if (onRow) onRow(b);
+                else if (linkTo) location.hash = '#/bond/' + b.isin;
+              }}
+              title={onRow ? 'Открыть карточку выпуска окном' : undefined}
+            >
               {cols.map(k => (
                 <td key={k}>
-                  {k === 'name' && linkTo
+                  {k === 'name' && linkTo && !onRow
                     ? <Link to={'/bond/' + b.isin} onClick={e => e.stopPropagation()}>{COLS[k].cell(b)}</Link>
                     : COLS[k].cell(b)}
                 </td>

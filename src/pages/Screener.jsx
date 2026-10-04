@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchBonds, fetchRatings, COLLECTIONS, COUPON_LABEL, daysUntil } from '../api/moex';
 import { BondTable, Pager, Loading, ErrorBox, Panel, Kpi, RATING_HINT } from '../components/ui';
+import BondPopup from '../components/BondPopup';
 import { nf, dateTime } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
@@ -342,6 +343,7 @@ export default function Screener() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [onlyFav, setOnlyFav] = useState(false);   // доп. фильтр «только избранное»
   const [page, setPage] = useState(1);
+  const [popup, setPopup] = useState(null);        // быстрый просмотр бумаги окном
   /* Режим отбора: свои фильтры или цель. В режиме цели ручные фильтры
      скрыты — как на образце: человек видит ровно те условия, которые
      задала цель, и не смешивает их со своими прошлыми экспериментами. */
@@ -920,11 +922,11 @@ export default function Screener() {
           </div>
         ) : (
           <>
-            <BondTable bonds={slice} cols={
-              filters.budget
-                ? [...SCREENER_COLS, 'lotCost']
-                : SCREENER_COLS
-            } />
+            <BondTable
+              bonds={slice}
+              cols={filters.budget ? [...SCREENER_COLS, 'lotCost'] : SCREENER_COLS}
+              onRow={setPopup}
+            />
             <Pager
               page={cur}
               pages={pages}
@@ -949,6 +951,11 @@ export default function Screener() {
           Котировки, доходности и карточки выпусков грузятся с Московской биржи при каждом открытии страницы.
         </div>
       )}
+
+      {/* Быстрый просмотр бумаги из списка: клик по строке открывает окно,
+          как в оригинале, а на полную страницу выпуска ведёт кнопка уже
+          внутри окна. */}
+      {popup && <BondPopup key={popup.isin} bond={popup} onClose={() => setPopup(null)} />}
     </div>
   );
 }
