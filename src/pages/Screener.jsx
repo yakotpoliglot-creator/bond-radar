@@ -47,14 +47,58 @@ const RATING_LABEL = {
   aaa: 'Только AAA',
 };
 
-/* Значения фильтров по умолчанию (hideAnomaly включён по требованию) */
-const EMPTY_FILTERS = {
+/* Рейтинг «не выше»: вторая половина той же шкалы (1 — D, 20 — AAA).
+   Нужна целям вроде «рискнуть», где интересны как раз бумаги пониже
+   качеством. Коды идут по шагу шкалы: BBB+ = 13, BB+ = 10, B+ = 7. */
+const RATING_MAX = {
+  all: null,
+  bbb: 13,      // BBB+ и ниже
+  bb: 10,       // BB+ и ниже
+  b: 7,         // B+ и ниже
+};
+
+const RATING_MAX_LABEL = {
+  all: 'Любой',
+  bbb: 'не выше BBB+',
+  bb: 'не выше BB+',
+  b: 'не выше B+',
+};
+
+/* ── Цели: «что вы хотите сделать с деньгами?» ─────────────────────
+   Взято по образцу платного скринера (bondradar.pro): вместо того чтобы
+   самому переводить свою задачу в рейтинг, срок и частоту купона,
+   человек выбирает цель — а мы подставляем под неё готовый набор уже
+   существующих фильтров. Новой логики отбора здесь нет: только
+   предустановки, и они подписаны прямо на карточке цели, чтобы было
+   видно, по каким условиям отобраны бумаги. */
+const GOALS = [
+  { slug: 'sohranit', title: 'Сохранить', desc: 'надёжно, AAA–AA, 1–3 года',
+    preset: { rating: 'aa', ratingMax: 'all', maturity: '1-3', freq: 'all', kind: 'all' } },
+  { slug: 'zarabotat', title: 'Заработать', desc: 'выше рынка, A и выше, 3–5 лет',
+    preset: { rating: 'a', ratingMax: 'all', maturity: '3-5', freq: 'all', kind: 'all' } },
+  { slug: 'dohod', title: 'Получать доход', desc: 'каждый месяц, рейтинг BBB- и выше',
+    preset: { rating: 'inv', ratingMax: 'all', maturity: 'all', freq: 'monthly', kind: 'all' } },
+  { slug: 'priparkovat', title: 'Припарковать', desc: 'до 1 года, только AAA',
+    preset: { rating: 'aaa', ratingMax: 'all', maturity: 'lt1', freq: 'all', kind: 'all' } },
+  { slug: 'risknut', title: 'Рискнуть', desc: 'высокая доходность, BBB+ и ниже',
+    preset: { rating: 'all', ratingMax: 'bbb', maturity: 'all', freq: 'all', kind: 'all' } },
+  { slug: 'floatery', title: 'Флоатеры', desc: 'плавающий купон, рейтинг A и выше',
+    preset: { rating: 'a', ratingMax: 'all', maturity: 'all', freq: 'all', kind: 'float' } },
+];
+
+/* Значения фильтров по умолчанию (hideAnomaly включён по требованию).
+   rating: 'aaa' — по просьбе заказчика скринер по умолчанию показывает
+   только бумаги с рейтингом AAA: это самый короткий путь к надёжному
+   списку. Ограничение видно в подписи и снимается кнопкой «Весь рынок»,
+   чтобы его нельзя было принять за «на рынке больше ничего нет». */
+const DEFAULT_FILTERS = {
   search: '',
   ytmMin: '',
   ytmMax: '',
   kind: 'all',
   level: 'all',
-  rating: 'all',       // рейтинг не ниже (данные smart-lab)
+  rating: 'aaa',       // рейтинг не ниже (данные smart-lab); AAA по умолчанию
+  ratingMax: 'all',    // рейтинг не выше — нужен целям вроде «рискнуть»
   maturity: 'all',
   turnoverMin: '',
   hideAnomaly: true,
@@ -160,6 +204,12 @@ function matchFilters(b, f) {
      не знаем, и пропускать её значило бы обещать то, чего нет. */
   const rMin = RATING_MIN[f.rating];
   if (rMin != null && !(b.ratingCode != null && b.ratingCode >= rMin)) return false;
+
+  /* Рейтинг «не выше» — вторая половина шкалы. Как и в случае «не ниже»,
+     бумага без рейтинга условие не проходит: иначе цель «рискнуть»
+     набивалась бы бумагами, о качестве которых мы ничего не знаем. */
+  const rMax = RATING_MAX[f.ratingMax];
+  if (rMax != null && !(b.ratingCode != null && b.ratingCode <= rMax)) return false;
 
   // Бюджет: «у меня есть N ₽». Стоимость покупки одного лота
   // = (цена / 100 × номинал + НКД) × размер лота.
@@ -276,9 +326,14 @@ export default function Screener() {
   const [bonds, setBonds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [onlyFav, setOnlyFav] = useState(false);   // доп. фильтр «только избранное»
   const [page, setPage] = useState(1);
+  /* Режим отбора: свои фильтры или цель. В режиме цели ручные фильтры
+     скрыты — как на образце: человек видит ровно те условия, которые
+     задала цель, и не смешивает их со своими прошлыми экспериментами. */
+  const [mode, setMode] = useState('own');
+  const [goal, setGoal] = useState(null);          // slug выбранной цели
 
   /* ── загрузка данных MOEX ── */
   const load = useCallback(async (force = false) => {
@@ -349,6 +404,28 @@ export default function Screener() {
   // при смене фильтров/подборки возвращаемся на первую страницу
   useEffect(() => { setPage(1); }, [filters, collection, onlyFav]);
 
+  /* ── Сколько выпусков даёт каждая цель ────────────────────────────
+     Считаем по уже загруженному списку, без запросов к бирже. Число на
+     карточке цели честнее описания: сразу видно, что «Припарковать» —
+     это единицы бумаг, а «Рискнуть» — сотни, и что выбор ограничен не
+     только целью, но и тем, у кого вообще есть рейтинг. */
+  const goalCounts = useMemo(() => {
+    const out = {};
+    for (const g of GOALS) {
+      const f = { ...DEFAULT_FILTERS, ...g.preset };
+      let n = 0;
+      for (const b of bonds) {
+        if (collection && !collection.test(b)) continue;
+        if (onlyFav && !favList.includes(b.isin)) continue;
+        if (!matchFilters(b, f)) continue;
+        if (b.ytm == null && f.hideAnomaly) continue;
+        n++;
+      }
+      out[g.slug] = n;
+    }
+    return out;
+  }, [bonds, collection, onlyFav, favList]);
+
   const pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
   const cur = Math.min(page, pages);
   const slice = useMemo(
@@ -363,7 +440,22 @@ export default function Screener() {
   }, [rows]);
 
   const set = patch => setFilters(f => ({ ...f, ...patch }));
-  const reset = () => { setFilters(EMPTY_FILTERS); setOnlyFav(false); setPage(1); };
+  /* Сброс возвращает к тем значениям, с которыми страница открылась.
+     AAA по умолчанию — решение заказчика, поэтому и после сброса оно
+     остаётся: иначе кнопка «Сбросить» тихо отменяла бы договорённость. */
+  const reset = () => { setFilters(DEFAULT_FILTERS); setOnlyFav(false); setGoal(null); setPage(1); };
+
+  /* ── Применение цели ────────────────────────────────────────────
+     Цель задаёт свои измерения целиком (рейтинг, срок, частоту купона),
+     поэтому остальные условия берём из DEFAULT_FILTERS: иначе выбор цели
+     после ручных экспериментов оставлял бы чужие ограничения. Поиск
+     сохраняем — его человек вводил сам. */
+  const goalBySlug = slug => GOALS.find(g => g.slug === slug) || null;
+  const applyGoal = g => {
+    setGoal(g.slug);
+    setFilters({ ...DEFAULT_FILTERS, search: filters.search, ...g.preset });
+    setPage(1);
+  };
 
   /* Подставляем поиск из адреса (пришёл с карточки акции). Эффект стоит
      здесь, а не рядом с чтением qParam: set объявлен выше только тут. */
@@ -450,6 +542,77 @@ export default function Screener() {
         )
       )}
 
+      {/* ── Режим отбора: свои фильтры или цель ─────────────────────
+          Как на образце: «по цели» — тот же скринер, но условия задаёт
+          цель, а ручные фильтры скрыты, чтобы они не спорили друг с
+          другом незаметно для человека. */}
+      <div className="mode-sw" style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          type="button"
+          className={'chip' + (mode === 'own' ? ' on' : '')}
+          onClick={() => { setMode('own'); setGoal(null); }}
+        >
+          Свои фильтры
+        </button>
+        <button
+          type="button"
+          className={'chip' + (mode === 'goal' ? ' on' : '')}
+          onClick={() => setMode('goal')}
+        >
+          По цели
+        </button>
+      </div>
+
+      {mode === 'goal' && (
+        <Panel
+          title="Что вы хотите сделать с деньгами?"
+          style={{ marginBottom: 12 }}
+          right={<span className="c-3" style={{ fontSize: 11 }}>цель подставляет условия отбора</span>}
+        >
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+            {GOALS.map(g => {
+              const on = goal === g.slug;
+              return (
+                <button
+                  key={g.slug}
+                  className={'btn' + (on ? ' btn-green' : '')}
+                  style={{ display: 'block', height: 'auto', textAlign: 'left', padding: '10px 12px' }}
+                  onClick={() => applyGoal(g)}
+                  title={`Подставит условия: ${g.desc}`}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 3 }}>{g.title}</div>
+                  <div style={{ fontSize: 11, opacity: 0.85, lineHeight: 1.5 }}>{g.desc}</div>
+                  <div className="mono" style={{ fontSize: 11, marginTop: 6 }}>
+                    {goalCounts[g.slug] ? nf(goalCounts[g.slug], 0) + ' вып.' : 'ничего не подходит'}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Условия цели раскрываем словами: цель — это не «рекомендация»,
+              а набор фильтров, и человек должен видеть, каких именно. */}
+          <div className="kpi-s" style={{ marginTop: 10, lineHeight: 1.65 }}>
+            {goal ? (
+              <>
+                Цель «{goalBySlug(goal)?.title}» — это условия: {goalBySlug(goal)?.desc}. Рейтинг —
+                эмитента, по данным smart-lab.ru; срок и купон — по данным Мосбиржи. Бумаги без
+                рейтинга в выборку не попадают: про них мы ничего не знаем.{' '}
+                <span
+                  style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={() => { setGoal(null); setFilters({ ...DEFAULT_FILTERS, search: filters.search }); }}
+                >
+                  Снять цель
+                </span>
+              </>
+            ) : (
+              <>Выберите цель — покажем выпуски, которые под неё подходят, и напишем, по каким условиям
+                они отобраны. Нужны свои условия — переключитесь на «Свои фильтры».</>
+            )}
+          </div>
+        </Panel>
+      )}
+
       {/* ── Сводка ── */}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 12 }}>
         <Kpi label="Всего выпусков" value={bonds.length} sub="TQCB + TQOB, MOEX" />
@@ -458,6 +621,20 @@ export default function Screener() {
       </div>
 
       {/* ── Фильтры ── */}
+      {/* Про рейтинг по умолчанию говорим там, где человек ищет фильтры:
+          иначе «показано 12 из 3095» читается как «на рынке всего 12 бумаг». */}
+      {mode === 'own' && filters.rating === 'aaa' && filters.ratingMax === 'all' && (
+        <div className="kpi-s" style={{ marginBottom: 8, lineHeight: 1.6 }}>
+          По умолчанию показаны только выпуски с рейтингом AAA.{' '}
+          <span
+            style={{ cursor: 'pointer', textDecoration: 'underline' }}
+            onClick={() => set({ rating: 'all' })}
+          >
+            Показать весь рынок
+          </span>
+        </div>
+      )}
+      {mode === 'own' && (
       <Panel title="Фильтры" style={{ marginBottom: 12 }}>
         <div className="filters">
           <div className="fg">
@@ -530,6 +707,15 @@ export default function Screener() {
             <label title={RATING_HINT}>Рейтинг не ниже</label>
             <select className="sel" value={filters.rating} onChange={e => set({ rating: e.target.value })}>
               {Object.entries(RATING_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            </select>
+          </div>
+
+          {/* Ограничение сверху — для поиска доходности пониже качеством.
+              Рейтинг относится к эмитенту (данные smart-lab.ru). */}
+          <div className="fg">
+            <label title={RATING_HINT}>Рейтинг не выше</label>
+            <select className="sel" value={filters.ratingMax} onChange={e => set({ ratingMax: e.target.value })}>
+              {Object.entries(RATING_MAX_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
             </select>
           </div>
 
@@ -682,6 +868,7 @@ export default function Screener() {
           </div>
         )}
       </Panel>
+      )}
 
       {/* ── Таблица + пагинация ── */}
       <Panel

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchBonds } from '../api/moex';
-import { Panel, Loading, ErrorBox, Pager } from '../components/ui';
+import { Panel, Loading, ErrorBox, Pager, RatingTag } from '../components/ui';
 import { nf, money } from '../lib/format';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -11,7 +11,10 @@ import { nf, money } from '../lib/format';
 
 const PER_PAGE = 50;
 
+/* Сортировки. По умолчанию — по рейтингу: по просьбе заказчика каталог
+   открывается с AAA наверху, чтобы список начинался с самого надёжного. */
 const SORTS = [
+  { key: 'rating', label: 'По рейтингу (AAA выше)' },
   { key: 'count', label: 'По числу выпусков' },
   { key: 'alpha', label: 'По алфавиту' },
   { key: 'volume', label: 'По объёму' },
@@ -22,7 +25,7 @@ export default function Issuers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState('count');
+  const [sort, setSort] = useState('rating');
   const [page, setPage] = useState(1);
 
   /* ── загрузка ──────────────────────────────────────────────────── */
@@ -57,14 +60,26 @@ export default function Issuers() {
     }
     return [...map.values()]
       .filter(g => g.bonds.length)               // пустые группы отбрасываем
-      .map(g => ({
-        ...g,
-        count: g.bonds.length,
-        avgYtm: g.ytms.length ? g.ytms.reduce((a, b) => a + b, 0) / g.ytms.length : null,
-        // название берём по первой бумаге эмитента
-        name: g.bonds[0].shortname || g.bonds[0].name || g.key,
-        search: (g.bonds[0].shortname + ' ' + (g.bonds[0].name || '')).toLowerCase(),
-      }));
+      .map(g => {
+        /* Рейтинг эмитента — лучший рейтинг среди его выпусков: у одного
+           эмитента бумаги бывают с разными рейтингами (старая и новая
+           серии), а для сортировки «AAA выше» нужен именно лучший. */
+        let best = null;
+        for (const b of g.bonds) {
+          if (b.ratingCode == null) continue;
+          if (!best || b.ratingCode > best.ratingCode) best = { ratingCode: b.ratingCode, rating: b.rating };
+        }
+        return {
+          ...g,
+          count: g.bonds.length,
+          ratingCode: best ? best.ratingCode : null,
+          rating: best ? best.rating : null,
+          avgYtm: g.ytms.length ? g.ytms.reduce((a, b) => a + b, 0) / g.ytms.length : null,
+          // название берём по первой бумаге эмитента
+          name: g.bonds[0].shortname || g.bonds[0].name || g.key,
+          search: (g.bonds[0].shortname + ' ' + (g.bonds[0].name || '')).toLowerCase(),
+        };
+      });
   }, [all]);
 
   /* ── поиск и сортировка ────────────────────────────────────────── */
@@ -78,7 +93,13 @@ export default function Issuers() {
         g.bonds.some(b => (b.isin || '').toLowerCase().includes(query)));
     }
     const arr = [...out];
-    if (sort === 'alpha') arr.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    if (sort === 'rating') {
+      /* AAA выше; эмитенты без рейтинга — в конце, а не в начале:
+         ставить их первыми значило бы выдать неизвестность за качество. */
+      arr.sort((a, b) => (b.ratingCode ?? -1) - (a.ratingCode ?? -1)
+        || b.count - a.count
+        || a.name.localeCompare(b.name, 'ru'));
+    } else if (sort === 'alpha') arr.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     else if (sort === 'volume') arr.sort((a, b) => b.volume - a.volume);
     else arr.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ru'));
     return arr;
@@ -131,6 +152,7 @@ export default function Issuers() {
               <tr>
                 <th className="nosort">Эмитент</th>
                 <th className="nosort">Код</th>
+                <th className="nosort">Рейтинг</th>
                 <th className="nosort">Выпусков</th>
                 <th className="nosort">Объём</th>
                 <th className="nosort">Средняя YTM</th>
@@ -142,6 +164,11 @@ export default function Issuers() {
                 <tr key={g.key} onClick={() => { location.hash = '#/issuer/' + g.key; }}>
                   <td style={{ fontWeight: 600 }}>{g.name}</td>
                   <td className="mono c-2">{g.key}</td>
+                  <td className="mono">
+                    {g.rating
+                      ? <RatingTag rating={g.rating} code={g.ratingCode} />
+                      : <span className="c-3" title="В таблице котировок smart-lab.ru рейтинга этого эмитента нет">—</span>}
+                  </td>
                   <td className="mono">{nf(g.count, 0)}</td>
                   <td className="mono c-2">{money(g.volume)}</td>
                   <td className="mono">{g.avgYtm == null ? <span className="c-3">—</span> : nf(g.avgYtm, 2) + '%'}</td>
@@ -151,13 +178,22 @@ export default function Issuers() {
                 </tr>
               ))}
               {!slice.length && (
-                <tr><td colSpan={6} className="empty">Ничего не найдено</td></tr>
+                <tr><td colSpan={7} className="empty">Ничего не найдено</td></tr>
               )}
             </tbody>
           </table>
         </div>
         <Pager page={current} pages={pages} onChange={setPage} total={list.length} perPage={PER_PAGE} />
       </Panel>
+
+      {/* Источник рейтинга называем прямо: это не выписка рейтингового
+          агентства, а таблица котировок, и сортировать по ней можно
+          только с этой оговоркой. */}
+      <div className="c-3" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
+        Рейтинг эмитента — лучший рейтинг среди его выпусков по данным таблицы котировок{' '}
+        <a href="https://smart-lab.ru/q/bonds/" target="_blank" rel="noopener noreferrer">smart-lab.ru</a>.
+        Агентство и дата присвоения в источнике не указаны. Эмитенты без рейтинга — в конце списка.
+      </div>
     </div>
   );
 }
