@@ -274,8 +274,20 @@ h1, h2, h3 { font-family: 'Lora', Georgia, serif; font-weight: 700; margin: 0; }
 .fg { display: flex; flex-direction: column; gap: 3px; }
 .fg > label { font-size: 11.5px; color: var(--text3); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
 
-/* ═══════════════════════ Таблица ═══════════════════════ */
-.tbl-wrap { overflow-x: auto; }
+/* ═══════════════════════ Таблица ═══════════════════════
+   Прокрутка в обе стороны. По горизонтали она нужна, когда ячейки шире панели
+   (крупный шрифт, узкое окно) — ячейки не переносятся, поэтому таблица просто
+   не помещается. Но если высоту не ограничивать, горизонтальная полоса уедет
+   под последнюю строку списка на 50 строк, и, чтобы дотянуться до неё, надо
+   долистать страницу до низа. Ограничиваем высоту: обе полосы оказываются у
+   нижнего края таблицы, а шапка (она sticky, но липнет только когда коробка
+   сама прокручивается) остаётся на виду. */
+.tbl-wrap {
+  overflow: auto;
+  max-height: 78vh;
+  max-height: min(78vh, 960px);
+  overscroll-behavior-x: contain;
+}
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 table.tbl th {
   padding: 9px 11px;
