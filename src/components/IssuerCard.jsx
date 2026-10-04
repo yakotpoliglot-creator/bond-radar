@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom';
 import { Panel, RatingTag } from './ui';
-import { nf, money, dateShort, dateTime } from '../lib/format';
+import { money, dateShort, dateTime } from '../lib/format';
 import { girboUrl, moexReportsUrl } from '../api/moex';
-import { TONE_LABEL } from '../lib/ratios';
+import { TONE_CLS } from '../lib/ratios';
 
 /* ═══════════════════════════════════════════════════════════════════
    Эмитент: карточка на выпуске и подробности на его странице.
@@ -58,10 +58,9 @@ const ORG_FORMS = [
    облигаций реально встречаются, остальное — как есть. */
 const COUNTRIES = { 643: 'Россия', 112: 'Беларусь', 398: 'Казахстан', 804: 'Украина' };
 
-/* Цвет и подпись светофора — одни на весь сайт: подписи берём из общего
-   модуля порогов (lib/ratios), цвета — те же классы, что в панели
-   коэффициентов на странице эмитента. */
-const TONE_CLS = { good: 'c-g', warn: 'c-a', bad: 'c-r', na: 'c-3' };
+/* Цвет и подпись светофора — одни на весь сайт: и подписи, и цвета берём
+   из общего модуля порогов (lib/ratios) — там же считаются сами значения,
+   поэтому карточка и панель коэффициентов не могут разойтись. */
 
 function orgForm(title) {
   if (!title) return null;
@@ -184,9 +183,12 @@ export default function IssuerCard({
   );
 
   /* ── Метрики отчётности плитками ─────────────────────────────────
-     Тот же светофор и те же три показателя, что в карточке у
-     оригинала: долг к EBITDA, маржа по EBITDA и чистая маржа.
-     Значения считает lib/ratios — здесь только показ. */
+     Ранжирование — как в карточке у оригинала: цветной светофор стоит у
+     кредитных коэффициентов (долг к EBITDA, чистый долг к EBITDA,
+     покрытие процентов), а маржа и ROE серые и подписаны «справочно» —
+     без отрасли «хорошо/плохо» у них не бывает. Где знаменатель около
+     нуля, вместо абсурдного числа стоит «н/д».
+     Значения и цвета считает lib/ratios — здесь только показ. */
   const briefBlock = (
     <>
       {stats.length > 0 && (
@@ -196,11 +198,11 @@ export default function IssuerCard({
               <div key={s.key} className="kpi-card" title={s.hint} style={{ cursor: 'help' }}>
                 <div className="kpi-l">{s.label}</div>
                 <div className={'kpi-v ' + TONE_CLS[s.tone]}>
-                  {nf(s.value, s.unit === '%' ? 1 : 2)}
-                  <span style={{ fontSize: 13 }}>{s.unit}</span>
+                  {s.text}
+                  {!s.na && <span style={{ fontSize: 13 }}>{s.unit}</span>}
                 </div>
                 <div className="kpi-s">
-                  <span className={TONE_CLS[s.tone]}>●</span> {TONE_LABEL[s.tone]} · {s.year}
+                  <span className={TONE_CLS[s.tone]}>●</span> {s.toneLabel} · {s.year}
                 </div>
               </div>
             ))}
@@ -209,11 +211,13 @@ export default function IssuerCard({
             <span><span className="c-g">●</span> в норме</span>
             <span><span className="c-a">●</span> внимание</span>
             <span><span className="c-r">●</span> риск</span>
-            <span className="c-3">серые — данных нет</span>
+            <span className="c-3">серые — справочно, зависят от отрасли</span>
           </div>
           <div className="c-3" style={{ fontSize: 10.5, marginTop: 8, lineHeight: 1.6 }}>
             Цифры — из отчётности МСФО (smart-lab.ru), цвет — наша оценка порогов, а не факт из отчёта:
-            границы «нормы» зависят от отрасли. Наведите курсор на метрику — в подсказке, что она значит.
+            границы «нормы» зависят от отрасли. Где знаменатель около нуля, вместо абсурдного числа
+            стоит «н/д»: это не «очень плохо», а «считать не из чего». Наведите курсор на метрику —
+            в подсказке, что она значит.
           </div>
         </>
       )}

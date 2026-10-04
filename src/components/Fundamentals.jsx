@@ -1,6 +1,6 @@
 import { nf, chgClass, chgArrow } from '../lib/format';
 import { Panel } from './ui';
-import { RATIOS, TONE_LABEL, latest } from '../lib/ratios';
+import { RATIOS, TONE_CLS, TONE_LABEL, latest, ratioText, ratioValue } from '../lib/ratios';
 
 /* ═══════════════════════════════════════════════════════════════════
    Финансовая отчётность и коэффициенты — данные smart-lab.ru
@@ -293,7 +293,18 @@ export default function Fundamentals({ data, right }) {
   const ratioItems = fin
     ? RATIOS.map(r => {
       const l = latest(m[r.key]);
-      return l ? { r, l, tone: r.tone(l.value) } : null;
+      if (!l) return null;
+      /* Значение проходит общую отсечку: при знаменателе около нуля
+         коэффициент неинформативен, и вместо «166×» показываем «н/д». */
+      const v = ratioValue(r, l.value);
+      const tone = v.na ? 'na' : v.tone;
+      return {
+        r, l, tone,
+        text: v.na ? 'н/д' : ratioText(r, l.value),
+        toneLabel: v.na ? (v.sanitized ? 'неинформативно' : TONE_LABEL.na) : TONE_LABEL[tone],
+        hint: v.na ? v.why : r.hint,
+        na: !!v.na,
+      };
     }).filter(Boolean)
     : [];
 
@@ -305,34 +316,38 @@ export default function Fundamentals({ data, right }) {
         gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
         gap: 10,
       }}>
-        {ratioItems.map(({ r, l, tone }) => {
-          const cls = tone === 'good' ? 'c-g' : tone === 'warn' ? 'c-a' : tone === 'bad' ? 'c-r' : 'c-3';
+        {ratioItems.map(({ r, l, tone, text, toneLabel, hint, na }) => {
+          const cls = TONE_CLS[tone];
           return (
-            <div key={r.key} className="kpi-card" title={r.hint} style={{ cursor: 'help' }}>
+            <div key={r.key} className="kpi-card" title={hint} style={{ cursor: 'help' }}>
               <div className="kpi-l">{r.label}</div>
               <div className={'kpi-v ' + cls}>
-                {nf(l.value, r.unit === '%' ? 1 : 2)}<span style={{ fontSize: 13 }}>{r.unit}</span>
+                {text}{!na && <span style={{ fontSize: 13 }}>{r.unit}</span>}
               </div>
               <div className="kpi-s">
-                <span className={cls}>●</span> {TONE_LABEL[tone]} · {l.year}
+                <span className={cls}>●</span> {toneLabel} · {l.year}
               </div>
             </div>
           );
         })}
       </div>
 
-      {/* Легенда — как у оригинала. Смысл цветов без пояснения неочевиден. */}
+      {/* Легенда — как у оригинала. Смысл цветов без пояснения неочевиден:
+          светофор стоит только у кредитных коэффициентов, а маржа и
+          рентабельность серые, потому что без отрасли не оцениваются. */}
       <div style={{ marginTop: 12, fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
         <span><span className="c-g">●</span> в норме</span>
         <span><span className="c-a">●</span> внимание</span>
         <span><span className="c-r">●</span> риск</span>
-        <span className="c-3">серые — данных нет</span>
+        <span className="c-3">серые — справочно, зависят от отрасли</span>
       </div>
       <div className="c-3" style={{ fontSize: 10.5, marginTop: 10, lineHeight: 1.65 }}>
         <b>Это наша оценка порогов, а не факт из отчёта.</b> Границы «нормы» зависят от отрасли:
         долг 3× EBITDA для девелопера и для нефтяной компании значат разное, а высокая маржа
         у ритейла и у IT несопоставима. Смотрите на цвет как на подсказку, куда глянуть,
-        а не как на вывод о бумаге. Не является инвестиционной рекомендацией.
+        а не как на вывод о бумаге. Где знаменатель около нуля, вместо абсурдного коэффициента
+        стоит «н/д» — это не «очень плохо», а «считать не из чего».
+        Не является инвестиционной рекомендацией.
       </div>
     </Panel>
   ) : null;
