@@ -132,6 +132,7 @@ const DEFAULT_FILTERS = {
   onlyOnePerIssuer: false,  // не больше одного выпуска эмитента
   soonMaturity: false,      // погашение в ближайший год
   noAmort: false,           // без амортизации
+  noOffer: false,           // без оферты
 };
 
 /* Частота купона по периоду в днях. Границы взяты с запасом:
@@ -257,9 +258,15 @@ function matchFilters(b, f) {
     if (!(b.couponPeriod >= fr[0] && b.couponPeriod <= fr[1])) return false;
   }
 
-  // Валюта номинала
+  /* Валюта номинала. Рублёвый выпуск — не «валютный»: у него isCurrency
+     false, поэтому одним сравнением не обойтись, иначе «Рубль» давал бы
+     пустой список. */
   if (f.currency !== 'all') {
-    if (!b.isCurrency || b.currency !== f.currency) return false;
+    if (f.currency === 'RUB') {
+      if (b.isCurrency) return false;
+    } else if (!b.isCurrency || b.currency !== f.currency) {
+      return false;
+    }
   }
 
   // Погашение в ближайший год
@@ -271,6 +278,9 @@ function matchFilters(b, f) {
 
   // Без амортизации — номинал гасится целиком в конце
   if (f.noAmort && b.isAmort) return false;
+
+  // Без оферты — досрочного выкупа нет, доходность считается к погашению
+  if (f.noOffer && b.hasOffer) return false;
 
   return true;
 }
@@ -816,6 +826,7 @@ export default function Screener() {
             <label>Валюта номинала</label>
             <select className="sel" value={filters.currency} onChange={e => set({ currency: e.target.value })}>
               <option value="all">Любая</option>
+              <option value="RUB">Рубль</option>
               <option value="USD">Доллар</option>
               <option value="EUR">Евро</option>
               <option value="CNY">Юань</option>
@@ -841,6 +852,13 @@ export default function Screener() {
             title="Исключить бумаги, у которых номинал возвращают частями. У них доходность считается сложнее и цена не так показательна."
             checked={filters.noAmort}
             onChange={v => set({ noAmort: v })}
+          />
+
+          <CheckFilter
+            label="Без оферты"
+            title="Исключить бумаги с досрочным выкупом (put). У них доходность считается к оферте, а не к погашению, и ставка купона после оферты может быть другой."
+            checked={filters.noOffer}
+            onChange={v => set({ noOffer: v })}
           />
 
           <div className="fg">
