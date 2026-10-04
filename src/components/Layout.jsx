@@ -56,7 +56,7 @@ function currentLabel(pathname) {
   return null;
 }
 
-export default function Layout({ children, theme, setTheme }) {
+export default function Layout({ children, theme, setTheme, big, setBig }) {
   const loc = useLocation();
   const [open, setOpen] = useState(false);
 
@@ -129,6 +129,12 @@ export default function Layout({ children, theme, setTheme }) {
           <div className="theme-sw">
             <button className={theme === 'light' ? 'on' : ''} onClick={() => setTheme('light')}>Светлая</button>
             <button className={theme === 'dark' ? 'on' : ''} onClick={() => setTheme('dark')}>Тёмная</button>
+          </div>
+          {/* Крупнее — для тех, кому обычного размера мало (заказчик смотрит
+              сайт в очках). Одна кнопка-переключатель: она заметнее, чем
+              объяснение «нажмите Ctrl и плюс». */}
+          <div className="theme-sw" style={{ marginTop: 9 }}>
+            <button className={big ? 'on' : ''} onClick={() => setBig(!big)}>Крупнее</button>
           </div>
           <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', marginTop: 9, lineHeight: 1.5 }}>
             Данные Московской биржи<br />

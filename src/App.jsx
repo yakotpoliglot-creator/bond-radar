@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useTheme } from './lib/store';
+import { useTheme, useBigFont } from './lib/store';
 import Layout from './components/Layout';
 import './styles/theme.css';
 
@@ -19,10 +19,11 @@ import Risk from './pages/Risk';
 
 export default function App() {
   const [theme, setTheme] = useTheme();
+  const [big, setBig] = useBigFont();
 
   return (
     <HashRouter>
-      <Layout theme={theme} setTheme={setTheme}>
+      <Layout theme={theme} setTheme={setTheme} big={big} setBig={setBig}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/screener" element={<Screener />} />

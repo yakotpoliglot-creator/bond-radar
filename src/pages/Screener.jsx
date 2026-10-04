@@ -70,19 +70,32 @@ const RATING_MAX_LABEL = {
    человек выбирает цель — а мы подставляем под неё готовый набор уже
    существующих фильтров. Новой логики отбора здесь нет: только
    предустановки, и они подписаны прямо на карточке цели, чтобы было
-   видно, по каким условиям отобраны бумаги. */
+   видно, по каким условиям отобраны бумаги.
+
+   Цвет и иконка — тоже с оригинала: там у каждой цели свой цветовой токен
+   (щит у «сохранить», график у «заработать», календарь у дохода, часы у
+   «припарковать», треугольник у «рискнуть», волны у флоатеров). Это не
+   украшательство: по цвету цель находится глазами быстрее, чем по тексту,
+   а заказчик смотрит сайт в очках. Иконки 16×16, обводка 1.8 — как в
+   оригинале; у нас они чуть крупнее (18px). */
 const GOALS = [
-  { slug: 'sohranit', title: 'Сохранить', desc: 'надёжно, AAA–AA, 1–3 года',
+  { slug: 'sohranit', title: 'Сохранить', desc: 'надёжно, AAA–AA, 1–3 года', color: 'blue',
+    icon: <><path d="M8 2l5 2v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4z" /><path d="M5.8 8l1.6 1.6L10.4 6.6" /></>,
     preset: { rating: 'aa', ratingMax: 'all', maturity: '1-3', freq: 'all', kind: 'all' } },
-  { slug: 'zarabotat', title: 'Заработать', desc: 'выше рынка, A и выше, 3–5 лет',
+  { slug: 'zarabotat', title: 'Заработать', desc: 'выше рынка, A и выше, 3–5 лет', color: 'green',
+    icon: <path d="M2 12l4-4 3 3 5-6" />,
     preset: { rating: 'a', ratingMax: 'all', maturity: '3-5', freq: 'all', kind: 'all' } },
-  { slug: 'dohod', title: 'Получать доход', desc: 'каждый месяц, рейтинг BBB- и выше',
+  { slug: 'dohod', title: 'Получать доход', desc: 'каждый месяц, рейтинг BBB- и выше', color: 'amber',
+    icon: <><rect x="3" y="4" width="10" height="9" rx="2" /><path d="M5 4V2m6 2V2M3 7h10" /></>,
     preset: { rating: 'inv', ratingMax: 'all', maturity: 'all', freq: 'monthly', kind: 'all' } },
-  { slug: 'priparkovat', title: 'Припарковать', desc: 'до 1 года, только AAA',
+  { slug: 'priparkovat', title: 'Припарковать', desc: 'до 1 года, только AAA', color: 'purple',
+    icon: <><circle cx="8" cy="8" r="5.5" /><path d="M8 5.5V8l1.5 1.5" /></>,
     preset: { rating: 'aaa', ratingMax: 'all', maturity: 'lt1', freq: 'all', kind: 'all' } },
-  { slug: 'risknut', title: 'Рискнуть', desc: 'высокая доходность, BBB+ и ниже',
+  { slug: 'risknut', title: 'Рискнуть', desc: 'высокая доходность, BBB+ и ниже', color: 'red',
+    icon: <><path d="M8 2l6 12H2L8 2z" /><path d="M8 7v3m0 2v.5" /></>,
     preset: { rating: 'all', ratingMax: 'bbb', maturity: 'all', freq: 'all', kind: 'all' } },
-  { slug: 'floatery', title: 'Флоатеры', desc: 'плавающий купон, рейтинг A и выше',
+  { slug: 'floatery', title: 'Флоатеры', desc: 'плавающий купон, рейтинг A и выше', color: 'cyan',
+    icon: <path d="M2 6q2-3 4 0t4 0 4 0M2 11q2-3 4 0t4 0 4 0" />,
     preset: { rating: 'a', ratingMax: 'all', maturity: 'all', freq: 'all', kind: 'float' } },
 ];
 
@@ -546,7 +559,7 @@ export default function Screener() {
           Как на образце: «по цели» — тот же скринер, но условия задаёт
           цель, а ручные фильтры скрыты, чтобы они не спорили друг с
           другом незаметно для человека. */}
-      <div className="mode-sw" style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="mode-sw">
         <button
           type="button"
           className={'chip' + (mode === 'own' ? ' on' : '')}
@@ -567,24 +580,34 @@ export default function Screener() {
         <Panel
           title="Что вы хотите сделать с деньгами?"
           style={{ marginBottom: 12 }}
-          right={<span className="c-3" style={{ fontSize: 11 }}>цель подставляет условия отбора</span>}
+          right={<span className="c-3" style={{ fontSize: 12 }}>цель подставляет условия отбора</span>}
         >
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+          <div className="goal-grid">
             {GOALS.map(g => {
               const on = goal === g.slug;
+              const n = goalCounts[g.slug] || 0;
               return (
                 <button
                   key={g.slug}
-                  className={'btn' + (on ? ' btn-green' : '')}
-                  style={{ display: 'block', height: 'auto', textAlign: 'left', padding: '10px 12px' }}
+                  type="button"
+                  className={'goal-card' + (on ? ' on' : '')}
+                  /* Цвет цели отдаём в CSS двумя переменными: иконка берёт
+                     цвет, квадрат под ней — его светлую подложку. */
+                  style={{ '--gc': `var(--${g.color})`, '--gcbg': `var(--${g.color}-bg)` }}
                   onClick={() => applyGoal(g)}
                   title={`Подставит условия: ${g.desc}`}
                 >
-                  <div style={{ fontWeight: 600, marginBottom: 3 }}>{g.title}</div>
-                  <div style={{ fontSize: 11, opacity: 0.85, lineHeight: 1.5 }}>{g.desc}</div>
-                  <div className="mono" style={{ fontSize: 11, marginTop: 6 }}>
-                    {goalCounts[g.slug] ? nf(goalCounts[g.slug], 0) + ' вып.' : 'ничего не подходит'}
-                  </div>
+                  <span className="goal-ico">
+                    <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor"
+                      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      {g.icon}
+                    </svg>
+                  </span>
+                  <span className="goal-t">{g.title}</span>
+                  <span className="goal-d">{g.desc}</span>
+                  <span className="goal-n">
+                    {n ? <>{nf(n, 0)} <span className="u">вып.</span></> : <span className="u">ничего не подходит</span>}
+                  </span>
                 </button>
               );
             })}
