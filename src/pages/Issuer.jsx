@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboDate, girboUrl, bondsOfIssuer, fetchIssuerProfile, fetchFundamentals, findIssuerFundamentals, COUPON_LABEL, moexReportsUrl } from '../api/moex';
+import { fetchBonds, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboDate, bondsOfIssuer, fetchIssuerProfile, fetchFundamentals, findIssuerFundamentals, COUPON_LABEL } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox } from '../components/ui';
 import Fundamentals from '../components/Fundamentals';
-import { nf, money, dateShort, dateTime } from '../lib/format';
+import IssuerCard from '../components/IssuerCard';
+import { nf, money, dateShort } from '../lib/format';
 
 /* ═══════════════════════════════════════════════════════════════════
    Страница эмитента — /issuer/:key.
@@ -171,6 +172,18 @@ export default function Issuer() {
     };
   }, [bonds]);
 
+  /* Лучший рейтинг среди выпусков — как в каталоге эмитентов: у одного
+     эмитента бумаги бывают с разными рейтингами (старые и новые серии),
+     а карточка показывает и лучший, и распределение целиком. */
+  const bestRating = useMemo(() => {
+    let best = null;
+    for (const b of bonds) {
+      if (b.ratingCode == null) continue;
+      if (!best || b.ratingCode > best.ratingCode) best = { ratingCode: b.ratingCode, rating: b.rating };
+    }
+    return best;
+  }, [bonds]);
+
   if (loading) return <Loading />;
   if (error) return <ErrorBox error={error} />;
 
@@ -246,6 +259,34 @@ export default function Issuer() {
             {qualStat.complete ? '' : ' (у эмитента их больше, проверены не все)'}.</>
           : null}
       </div>
+
+      {/* ── Карточка предприятия ─────────────────────────────────────
+          Тот же компонент, что и в карточке выпуска (components/IssuerCard):
+          реквизиты из реестра MOEX, рейтинг из таблицы, которая кормит
+          скринер, отчётность РСБУ из ГИР БО ФНС и прямая строка про
+          поручителя. Раньше здесь были две отдельные панели с теми же
+          данными — и они расходились с карточкой выпуска. */}
+      <IssuerCard
+        title={emitter?.title || info?.title}
+        shortTitle={emitter?.shortTitle}
+        inn={emitter?.inn || info?.inn}
+        ogrn={emitter?.ogrn}
+        okpo={emitter?.okpo}
+        country={emitter?.country}
+        legalAddress={emitter?.legalAddress}
+        postalAddress={emitter?.postalAddress}
+        website={emitter?.website}
+        capitalization={emitter?.capitalization}
+        emitterCapitalization={emitter?.emitterCapitalization}
+        capitalUpdatedAt={emitter?.capitalizationUpdatedAt}
+        rating={bestRating?.rating}
+        ratingCode={bestRating?.ratingCode}
+        bonds={bonds}
+        girbo={girbo}
+        girboDate={girboDate}
+        issuerKey={key}
+        emitterId={info?.id ?? emitter?.id}
+      />
 
       {/* ── Сводка ────────────────────────────────────────────────── */}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 14 }}>
@@ -334,70 +375,6 @@ export default function Issuer() {
         />
       </Panel>
 
-      {/* ── Официальные данные эмитента (реестр MOEX) ─────────────── */}
-      <Panel title="Данные об эмитенте" style={{ marginTop: 14 }}>
-        <table className="tbl" style={{ width: '100%' }}>
-          <tbody>
-            <tr>
-              <td className="c-3" style={{ width: 190 }}>Полное наименование</td>
-              <td>{emitter?.title || info?.title || '—'}</td>
-            </tr>
-            <tr>
-              <td className="c-3">ИНН</td>
-              <td className="mono">{emitter?.inn || info?.inn || '—'}</td>
-            </tr>
-            <tr>
-              <td className="c-3">ОГРН</td>
-              <td className="mono">{emitter?.ogrn || '—'}</td>
-            </tr>
-            <tr>
-              <td className="c-3">Юридический адрес</td>
-              <td>{emitter?.legalAddress || '—'}</td>
-            </tr>
-            <tr>
-              <td className="c-3">Почтовый адрес</td>
-              <td>{emitter?.postalAddress || '—'}</td>
-            </tr>
-            <tr>
-              <td className="c-3">Сайт</td>
-              <td>
-                {emitter?.website
-                  ? <a href={emitter.website} target="_blank" rel="noopener noreferrer">{emitter.website}</a>
-                  : '—'}
-              </td>
-            </tr>
-            <tr>
-              <td className="c-3">Капитализация эмитента</td>
-              <td>
-                {emitter?.emitterCapitalization != null ? money(emitter.emitterCapitalization) : '—'}
-                {emitter?.capitalization != null && emitter.capitalization !== emitter.emitterCapitalization
-                  ? <span className="c-3" style={{ marginLeft: 8, fontSize: 11 }}>группа компаний: {money(emitter.capitalization)}</span>
-                  : null}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7, marginTop: 12 }}>
-          Источник — реестр эмитентов Московской биржи (<span className="mono">iss.moex.com/iss/emitters</span>).
-          {' '}
-          <b>Кредитного рейтинга здесь нет</b> — MOEX его в открытом API не отдаёт:
-          в реестре 14 полей, ни одного рейтингового. А вот бухгалтерская отчётность
-          есть — она берётся из ГИР БО ФНС, блоком ниже.
-          {emitter?.capitalizationUpdatedAt
-            ? <span className="c-3"> Капитализация обновлена {String(emitter.capitalizationUpdatedAt).slice(0, 16)}.</span>
-            : null}
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-          {moexReportsUrl(info?.id)
-            ? <a className="btn btn-sm" href={moexReportsUrl(info.id)} target="_blank" rel="noopener noreferrer">
-                Отчётность эмитента на MOEX ↗
-              </a>
-            : null}
-          <Link className="btn btn-sm" to={`/issuer/${key}`} onClick={() => window.scrollTo(0, 0)}>↑ Наверх</Link>
-        </div>
-      </Panel>
 
       {/* ── МСФО компании со smart-lab ────────────────────────────── *
        * Показываем перед бухгалтерской отчётностью: МСФО богаче —
@@ -417,67 +394,6 @@ export default function Issuer() {
         </div>
       )}
 
-      {/* ── Бухгалтерская отчётность из ГИР БО ФНС ────────────────── */}
-      {girbo && !girbo.closed && girbo.years?.length ? (
-        <Panel
-          title="Бухгалтерская отчётность"
-          style={{ marginTop: 14 }}
-          right={<span className="c-3" style={{ fontSize: 11 }}>ГИР БО ФНС · тыс. → ₽{girboDate ? ` · данные от ${dateTime(girboDate)}` : ''}</span>}
-        >
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th className="nosort">ГОД</th>
-                  <th className="nosort">ВЫРУЧКА</th>
-                  <th className="nosort">АКТИВЫ</th>
-                  <th className="nosort">ОПУБЛИКОВАНО</th>
-                </tr>
-              </thead>
-              <tbody>
-                {girbo.years.map(y => (
-                  <tr key={y.year} style={{ cursor: 'default' }}>
-                    <td className="mono" style={{ fontWeight: 600 }}>{y.year}</td>
-                    <td className="mono">{money(y.revenue)}</td>
-                    <td className="mono">{money(y.assets)}</td>
-                    <td className="c-3" style={{ fontSize: 11 }}>{y.publishedAt ? dateShort(y.publishedAt) : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7, marginTop: 12 }}>
-            Источник — <b>Государственный информационный ресурс бухгалтерской отчётности</b> ФНС России
-            {' '}(<span className="mono">bo.nalog.gov.ru</span>), который ведётся по Федеральному закону
-            № 402-ФЗ «О бухгалтерском учёте», ст. 18. Данные публичные, регистрация не нужна.
-            <br />
-            <b>Важно понимать:</b> это отчётность <b>по РСБУ</b> — то есть самого юридического лица,
-            которое выпустило облигации. Она может заметно отличаться от консолидированной
-            отчётности группы по МСФО, которую публикуют для инвесторов: у материнской компании
-            выручка бывает в разы меньше, чем у всей группы.
-            <br />
-            Показаны только <b>выручка и валюта баланса</b> — то, что ФНС отдаёт открыто.
-            EBITDA, чистый долг и ICR требуют полной формы отчётности, а её часть организаций
-            закрывает от публичного доступа: ФНС отвечает «Organization closed for public use»,
-            и мы это ограничение уважаем, а не обходим.
-            {girbo.name ? <span className="c-3"> Организация в реестре: {girbo.name}.</span> : null}
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-            <a className="btn btn-sm" href={girboUrl(girbo.girboId)} target="_blank" rel="noopener noreferrer">
-              Открыть в ГИР БО ↗
-            </a>
-          </div>
-        </Panel>
-      ) : girbo?.closed ? (
-        <Panel title="Бухгалтерская отчётность" style={{ marginTop: 14 }}>
-          <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
-            Организация <b>закрыла свою отчётность</b> от публичного доступа в ГИР БО ФНС.
-            Это её право, и мы его уважаем — обходить ограничение не будем.
-          </div>
-        </Panel>
-      ) : null}
     </div>
   );
 }

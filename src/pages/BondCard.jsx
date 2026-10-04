@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Chart from 'chart.js/auto';
-import { fetchBonds, fetchBondCard, fetchIssuerInfo, fetchGirboByInn, fetchGirboDate, girboUrl, moexReportsUrl, moexIssueUrl } from '../api/moex';
+import { fetchBonds, fetchBondCard, fetchIssuerInfo, fetchEmitter, fetchGirboByInn, fetchGirboDate, moexReportsUrl, moexIssueUrl } from '../api/moex';
 import { BondTable, Panel, Kpi, Loading, ErrorBox, CouponTag, LevelTag, RatingTag, timesWord } from '../components/ui';
 import YieldCalculator from '../components/YieldCalculator';
+import IssuerCard from '../components/IssuerCard';
 import { nf, money, date, dateShort, dateTime, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
 import { useFavorites } from '../lib/store';
 
@@ -50,6 +51,7 @@ export default function BondCard() {
   const [issuer, setIssuer] = useState(null);
   const [girbo, setGirbo] = useState(null);        // отчётность эмитента, ГИР БО ФНС
   const [girboDate, setGirboDate] = useState(null); // когда робот собрал girbo.json
+  const [emitter, setEmitter] = useState(null);     // реестр MOEX: ОГРН, адрес, сайт, капитализация
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -95,6 +97,16 @@ export default function BondCard() {
     fetchGirboDate().then(d => { if (alive) setGirboDate(d); }).catch(() => {});
     return () => { alive = false; };
   }, [issuer?.inn]);
+
+  /* ── реестр эмитента: ОГРН, адрес, сайт, капитализация ──────────
+     Один запрос к реестру MOEX и только когда id эмитента уже известен:
+     без него карточка предприятия показала бы одно название. */
+  useEffect(() => {
+    if (issuer?.id == null) return;
+    let alive = true;
+    fetchEmitter(issuer.id).then(r => { if (alive) setEmitter(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [issuer?.id]);
 
   /** Бумага в общем списке (TQCB + TQOB) по ISIN или SECID. */
   const bond = useMemo(() => {
@@ -393,80 +405,33 @@ export default function BondCard() {
         />
       </div>
 
-      {/* ── Финансы того, кто отвечает по выпуску ───────────────────
-          По образцу платного скринера здесь стоит блок про финансы
-          эмитента. У нас это отчётность самого юридического лица из
-          ГИР БО ФНС (по ИНН). Про поручителя и группу говорим прямо:
-          этих данных нет в открытых источниках, а дорисовать их «по
-          смыслу» — значит выдать догадку за факт. */}
-      {girbo && !girbo.closed && girbo.years?.length ? (
-        <Panel
-          title={'Финансы эмитента · ' + (issuer?.title ? issuer.title : 'ГИР БО ФНС')}
-          style={{ marginBottom: 14 }}
-          right={<span className="c-3" style={{ fontSize: 11 }}>
-            РСБУ, ГИР БО ФНС{girboDate ? ` · данные от ${dateTime(girboDate)}` : ''}
-          </span>}
-        >
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th className="nosort">Год</th>
-                  <th className="nosort">Выручка</th>
-                  <th className="nosort">Активы</th>
-                  <th className="nosort">Опубликовано</th>
-                </tr>
-              </thead>
-              <tbody>
-                {girbo.years.slice(0, 5).map(y => (
-                  <tr key={y.year} style={{ cursor: 'default' }}>
-                    <td className="mono" style={{ fontWeight: 600 }}>{y.year}</td>
-                    <td className="mono">{money(y.revenue)}</td>
-                    <td className="mono">{money(y.assets)}</td>
-                    <td className="c-3" style={{ fontSize: 11 }}>{y.publishedAt ? dateShort(y.publishedAt) : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7, marginTop: 12 }}>
-            Это отчётность <b>самого юридического лица-эмитента по РСБУ</b>, а не группы.
-            У выпусков, которые делают через техническую компанию группы (СФО), собственных
-            оборотов обычно нет — и тогда цифры выше о риске бумаги почти ничего не говорят.
-            <br />
-            <b>Чего здесь нет:</b> поручителя, обеспечения и консолидированной отчётности группы.
-            Биржа такого не публикует, а по ISIN организация в ГИР БО не ищется — там поиск по ИНН.
-            Поэтому мы показываем то, что можно проверить, и не пишем «надёжно», не зная,
-            кто отвечает по выпуску.
-            {girbo.name ? <span className="c-3"> Организация в реестре: {girbo.name}.</span> : null}
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-            <a className="btn btn-sm" href={girboUrl(girbo.girboId)} target="_blank" rel="noopener noreferrer">
-              Открыть в ГИР БО ↗
-            </a>
-            {bond?.issuerKey && (
-              <Link className="btn btn-sm" to={'/issuer/' + bond.issuerKey}>
-                Отчётность и выпуски эмитента →
-              </Link>
-            )}
-          </div>
-        </Panel>
-      ) : (
-        <Panel title="Финансы эмитента" style={{ marginBottom: 14 }}>
-          <div className="c-2" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
-            {issuer?.inn
-              ? (girbo?.closed
-                ? 'Организация закрыла свою отчётность от публичного доступа в ГИР БО ФНС. Это её право, и обходить ограничение мы не будем.'
-                : 'Отчётности этого эмитента в ГИР БО ФНС нет: робот не нашёл её по ИНН. Организация могла сдать отчётность позже остальных или не сдавать её вовсе.')
-              : 'ИНН эмитента биржа по этому выпуску не отдала, а по названию организация в ГИР БО не ищется — ошибёшься и покажешь чужие цифры. Финансовых показателей по этой бумаге у нас нет.'}
-            <br />
-            <b>Поручителя, обеспечения и отчётности группы здесь нет ни у кого:</b> биржа таких
-            данных не публикует, а по ISIN ГИР БО организацию не находит.
-          </div>
-        </Panel>
-      )}
+      {/* ── Карточка предприятия ─────────────────────────────────────
+          По образцу платного скринера: у них над ценой стоит блок
+          «О компании» и панель «Финансы группы · поручитель». Прозу про
+          бизнес и риски мы не пишем — заказчик просил редакционное не
+          делать. Вместо неё проверяемые поля и честная строка о том, где
+          поручитель указан на самом деле. Компонент общий со страницей
+          эмитента, compact — три года отчётности вместо шести. */}
+      <IssuerCard
+        compact
+        title={emitter?.title || issuer?.title}
+        shortTitle={emitter?.shortTitle}
+        inn={emitter?.inn || issuer?.inn}
+        ogrn={emitter?.ogrn}
+        okpo={emitter?.okpo}
+        country={emitter?.country}
+        legalAddress={emitter?.legalAddress}
+        website={emitter?.website}
+        capitalization={emitter?.capitalization}
+        emitterCapitalization={emitter?.emitterCapitalization}
+        capitalUpdatedAt={emitter?.capitalizationUpdatedAt}
+        rating={bond?.rating}
+        ratingCode={bond?.ratingCode}
+        bonds={bond ? [bond] : []}
+        girbo={girbo}
+        girboDate={girboDate}
+        issuerKey={bond?.issuerKey}
+      />
 
       {/* ── Калькулятор: «у меня есть сумма и срок» ────────────────
           Считает на уже загруженных данных выпуска, без новых запросов.
