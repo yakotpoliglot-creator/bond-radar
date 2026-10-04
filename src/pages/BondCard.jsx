@@ -7,7 +7,8 @@ import YieldCalculator from '../components/YieldCalculator';
 import IssuerCard from '../components/IssuerCard';
 import Modal from '../components/Modal';
 import { ratioStats, latestPeriodLine } from '../lib/ratios';
-import { nf, money, date, dateShort, dateTime, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
+import { nf, money, date, dateShort, dateTime, duration, timeLeft, chgStrA } from '../lib/format';
+import { KPI_COLOR, couponColor, priceColor, ytmColor } from '../lib/kpiColors';
 import { useFavorites } from '../lib/store';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -221,6 +222,10 @@ export default function BondCard() {
     ? (bond.couponPercent / bond.price) * 100
     : null;
 
+  /* Флоатер: ставка купонов вперёд неизвестна, поэтому и купон, и доходность
+     у него в палитре оригинала янтарные — зелёный обещал бы больше, чем есть. */
+  const isFloater = bond?.couponKind === 'float';
+
   /* ── похожие выпуски: 4 группы как на bondradar ────────────────── */
   const similar = useMemo(() => {
     if (!bond) return [];
@@ -371,6 +376,7 @@ export default function BondCard() {
         <Kpi
           label="Цена, %"
           value={bond?.price == null ? '—' : nf(bond.price, 2)}
+          color={priceColor(bond?.price)}
           /* 548 выпусков из 3095 сегодня не торговались, и по ним биржа
              отдаёт цену предыдущего дня. Показывать её как текущую —
              значит выдать вчерашнее число за сегодняшнее, поэтому
@@ -384,7 +390,7 @@ export default function BondCard() {
         <Kpi
           label="Доходность, %"
           value={bond?.ytm == null ? 'н/д' : nf(bond.ytm, 2)}
-          cls={ytmClass(bond?.ytm)}
+          color={bond?.ytm == null ? KPI_COLOR.muted : ytmColor(isFloater)}
           sub={bond?.ytm == null && bond?.ytmRaw != null
             ? `MOEX отдаёт недостоверное значение ${nf(bond.ytmRaw, 2)}%`
             : bond?.ytmSuspect
@@ -394,6 +400,7 @@ export default function BondCard() {
         <Kpi
           label="Купон, %"
           value={bond?.couponPercent == null ? '—' : nf(bond.couponPercent, 2)}
+          color={bond?.couponPercent == null ? KPI_COLOR.muted : couponColor(isFloater, bond.couponPercent)}
           /* Купон MOEX отдаёт в валюте выпуска. У валютной бумаги
              писать «₽» нельзя: 47,50 — это доллары, а не рубли.
              Рядом даём рублёвый эквивалент по курсу биржи. */
@@ -405,22 +412,31 @@ export default function BondCard() {
         <Kpi
           label="Купон к цене, %"
           value={couponToPrice == null ? '—' : nf(couponToPrice, 2)}
+          color={couponToPrice == null ? KPI_COLOR.muted : KPI_COLOR.couponToPrice}
           sub="купон % ÷ цена × 100"
         />
         <Kpi
           label="Выплат в год"
           value={paymentsPerYear == null ? '—' : timesWord(paymentsPerYear)}
+          color={KPI_COLOR.payments}
           sub={bond?.couponPeriod ? `период ${bond.couponPeriod} дн.` : 'по данным MOEX'}
         />
-        <Kpi label="Дюрация" value={duration(bond?.durationDays)} sub={bond?.durationDays != null ? nf(bond.durationDays, 0) + ' дней' : '—'} />
+        <Kpi
+          label="Дюрация"
+          value={duration(bond?.durationDays)}
+          color={bond?.durationDays == null ? KPI_COLOR.muted : KPI_COLOR.duration}
+          sub={bond?.durationDays != null ? nf(bond.durationDays, 0) + ' дней' : '—'}
+        />
         <Kpi
           label="Номинал"
           value={bond?.faceValue == null ? '—' : nf(bond.faceValue, 0) + (bond.currency === 'RUB' ? ' ₽' : ' ' + bond.currency)}
+          color={KPI_COLOR.face}
           sub={bond?.isAmort ? 'амортизируется' : 'постоянный'}
         />
         <Kpi
           label="Оферта"
           value={offerDate ? dateShort(offerDate) : '—'}
+          color={offerDate ? KPI_COLOR.offer : KPI_COLOR.muted}
           sub={offerDate ? timeLeft(offerDate) : 'оферты нет'}
         />
         {/* Погашение отдельной плиткой, а не только строчкой в примечании:
@@ -429,6 +445,7 @@ export default function BondCard() {
         <Kpi
           label="Погашение"
           value={matDate ? dateShort(matDate) : '—'}
+          color={matDate ? KPI_COLOR.maturity : KPI_COLOR.muted}
           sub={matDate ? timeLeft(matDate) : 'даты нет'}
         />
       </div>

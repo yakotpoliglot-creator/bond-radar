@@ -18,11 +18,15 @@ export function ErrorBox({ error, onRetry }) {
   );
 }
 
-export function Kpi({ label, value, sub, cls = '' }) {
+/* color — цвет значения из палитры выпуска (lib/kpiColors): у оригинала цвет
+   плитки говорит, о чём цифра. Если у значения есть своя пометка (cls,
+   например «биржа отдаёт недостоверное значение»), она важнее палитры:
+   предупреждение нельзя перекрасить в спокойный синий. */
+export function Kpi({ label, value, sub, cls = '', color }) {
   return (
     <div className="kpi-card">
       <div className="kpi-l">{label}</div>
-      <div className={'kpi-v ' + cls}>{value}</div>
+      <div className={'kpi-v ' + cls} style={color && !cls ? { color } : undefined}>{value}</div>
       {sub && <div className="kpi-s">{sub}</div>}
     </div>
   );

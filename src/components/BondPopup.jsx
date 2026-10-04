@@ -8,7 +8,8 @@ import { Kpi, CouponTag, LevelTag, RatingTag, timesWord } from './ui';
 import IssuerCard from './IssuerCard';
 import Modal from './Modal';
 import { ratioStats, latestPeriodLine } from '../lib/ratios';
-import { nf, dateShort, duration, timeLeft, ytmClass, chgStrA } from '../lib/format';
+import { nf, dateShort, duration, timeLeft, chgStrA } from '../lib/format';
+import { KPI_COLOR, couponColor, priceColor, ytmColor } from '../lib/kpiColors';
 
 /* ── Быстрый просмотр бумаги из списка ───────────────────────────────
  *
@@ -85,6 +86,10 @@ export default function BondPopup({ bond, onClose }) {
   const paymentsPerYear = bond.couponPeriod ? 365 / bond.couponPeriod : (card?.couponFrequency ? +card.couponFrequency : null);
   const couponToPrice = bond.couponPercent != null && bond.price ? (bond.couponPercent / bond.price) * 100 : null;
   const issuerName = issuer?.shortTitle || issuer?.title || null;
+  /* Флоатер: ставка его купонов вперёд неизвестна, поэтому и купон, и
+     доходность у него в палитре оригинала янтарные — зелёный обещал бы
+     больше, чем эмитент обещал. */
+  const isFloater = bond.couponKind === 'float';
 
   return (
     <Modal
@@ -122,6 +127,7 @@ export default function BondPopup({ bond, onClose }) {
         <Kpi
           label="Цена, %"
           value={bond.price == null ? '—' : nf(bond.price, 2)}
+          color={priceColor(bond.price)}
           sub={bond.priceSrc === 'prev'
             ? (bond.priceChange == null ? 'предыдущий торговый день' : chgStrA(bond.priceChange) + ' за день')
             : (bond.priceChange == null ? 'от номинала' : chgStrA(bond.priceChange) + ' за день')}
@@ -129,29 +135,47 @@ export default function BondPopup({ bond, onClose }) {
         <Kpi
           label="Доходность, %"
           value={bond.ytm == null ? 'н/д' : nf(bond.ytm, 2)}
-          cls={ytmClass(bond.ytm)}
+          color={bond.ytm == null ? KPI_COLOR.muted : ytmColor(isFloater)}
           sub={bond.ytm == null ? 'биржа не отдаёт' : (bond.yieldDateType === 'OFFER' ? 'к оферте' : 'к погашению')}
         />
         <Kpi
           label="Купон, %"
           value={bond.couponPercent == null ? '—' : nf(bond.couponPercent, 2)}
+          color={bond.couponPercent == null ? KPI_COLOR.muted : couponColor(isFloater, bond.couponPercent)}
           sub={bond.couponValue == null ? 'ставка неизвестна' : (
             nf(bond.couponValue, 2) + (bond.currency === 'RUB' ? ' ₽' : ' ' + bond.currency) + ' за выплату'
           )}
         />
-        <Kpi label="Купон к цене, %" value={couponToPrice == null ? '—' : nf(couponToPrice, 2)} sub="купон % ÷ цена × 100" />
+        <Kpi
+          label="Купон к цене, %"
+          value={couponToPrice == null ? '—' : nf(couponToPrice, 2)}
+          color={couponToPrice == null ? KPI_COLOR.muted : KPI_COLOR.couponToPrice}
+          sub="купон % ÷ цена × 100"
+        />
         <Kpi
           label="Выплат в год"
           value={paymentsPerYear == null ? '—' : timesWord(paymentsPerYear)}
+          color={KPI_COLOR.payments}
           sub={bond.couponPeriod ? `период ${bond.couponPeriod} дн.` : 'по данным MOEX'}
         />
-        <Kpi label="Дюрация" value={duration(bond.durationDays)} sub={bond.durationDays != null ? nf(bond.durationDays, 0) + ' дней' : '—'} />
+        <Kpi
+          label="Дюрация"
+          value={duration(bond.durationDays)}
+          color={bond.durationDays == null ? KPI_COLOR.muted : KPI_COLOR.duration}
+          sub={bond.durationDays != null ? nf(bond.durationDays, 0) + ' дней' : '—'}
+        />
         <Kpi
           label="Оферта"
           value={offerDate ? dateShort(offerDate) : '—'}
+          color={offerDate ? KPI_COLOR.offer : KPI_COLOR.muted}
           sub={offerDate ? timeLeft(offerDate) : 'оферты нет'}
         />
-        <Kpi label="Погашение" value={matDate ? dateShort(matDate) : '—'} sub={matDate ? timeLeft(matDate) : 'даты нет'} />
+        <Kpi
+          label="Погашение"
+          value={matDate ? dateShort(matDate) : '—'}
+          color={matDate ? KPI_COLOR.maturity : KPI_COLOR.muted}
+          sub={matDate ? timeLeft(matDate) : 'даты нет'}
+        />
       </div>
 
       {/* ── Кто за бумагой: та же карточка предприятия, что открывается
