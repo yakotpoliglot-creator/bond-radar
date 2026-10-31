@@ -35,4 +35,12 @@ jobs:
           curl -s --max-time 10 https://ifconfig.me || echo "не определить"
 
       - name: Проверить источники новостей
-        run: node scripts/news-probe.mjs
+        run: node scripts/news-probe.mjs 2>&1 | tee probe-report.txt
+
+      - name: Выложить отчёт артефактом
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-report
+          path: probe-report.txt
+          retention-days: 7
