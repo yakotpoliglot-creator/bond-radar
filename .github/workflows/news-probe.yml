@@ -4,11 +4,12 @@ name: Пробник новостей (временный)
 # ленты с американских адресов GitHub Actions. Прошлый раз это остановило
 # работу над агрегатором — мои запросы шли с домашней машины в России.
 #
-# Живёт в ветке news-probe. В master не попадает: удаляется вместе с веткой.
+# Отчёт кладём в ОТДЕЛЬНУЮ ветку probe-report: логи, артефакты и сводка
+# приватного репозитория закрыты без авторизации, а файл в ветке читается
+# обычным API. master при этом не трогается вообще.
 #
-# Логи, артефакты и сводка приватного репозитория закрыты без авторизации,
-# поэтому отчёт отдаём наружу сами — POST-ом на публичный приёмник.
-# Ничего не коммитим и в репозиторий не пишем.
+# В master не попадает: сам workflow живёт в ветке news-probe и удаляется
+# вместе с ней.
 
 on:
   push:
@@ -17,7 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
@@ -35,31 +36,26 @@ jobs:
       - name: Проверить источники новостей
         run: node scripts/news-probe.mjs 2>&1 | tee probe-report.txt
 
-      - name: Отправить отчёт наружу
+      - name: Дописать адрес раннера
         if: always()
         run: |
-          echo "== адрес раннера =="
-          curl -s --max-time 10 https://ifconfig.me || echo "не определить"
-          echo ""
-          echo "== отчёт =="
-          cat probe-report.txt || echo "отчёта нет"
-          echo ""
-          echo "== отправка =="
-          python3 - <<'PY'
-          import json, os, urllib.request
-          body = open('probe-report.txt', encoding='utf-8', errors='replace').read()
-          if not body.strip():
-              print('отчёт пуст, отправлять нечего')
-              raise SystemExit(0)
-          req = urllib.request.Request(
-              'https://httpbin.org/post',
-              data=json.dumps({'report': body[:60000]}).encode(),
-              headers={'Content-Type': 'application/json'},
-              method='POST',
-          )
-          try:
-              with urllib.request.urlopen(req, timeout=40) as r:
-                  print('ответ приёмника:', r.status)
-          except Exception as e:
-              print('приёмник недоступен:', e)
-          PY
+          {
+            echo ""
+            echo "адрес раннера: $(curl -s --max-time 10 https://ifconfig.me || echo '—')"
+          } >> probe-report.txt
+          echo "--- отчёт ---"
+          cat probe-report.txt
+
+      - name: Положить отчёт в ветку probe-report
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan probe-report-tmp 2>/dev/null || git checkout --orphan probe-report-tmp
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          cp probe-report.txt /tmp/probe-report.txt
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} + 2>/dev/null || true
+          cp /tmp/probe-report.txt probe-report.txt
+          git add -f probe-report.txt
+          git commit -m "Отчёт пробника источников новостей"
+          git push -f origin HEAD:probe-report
