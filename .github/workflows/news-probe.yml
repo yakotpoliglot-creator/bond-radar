@@ -1,0 +1,38 @@
+name: Пробник новостей (временный)
+
+# ВРЕМЕННЫЙ workflow для проверки одного неизвестного: отвечают ли новостные
+# ленты с американских адресов GitHub Actions. Прошлый раз это остановило
+# работу над агрегатором — мои запросы шли с домашней машины в России.
+#
+# Живёт в ветке news-probe. В master не попадает: удаляется вместе с веткой.
+# Ничего не коммитит и никуда не пишет — только печатает результат в лог.
+
+on:
+  push:
+    branches:
+      - news-probe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Откуда мы стучимся
+        run: |
+          echo "Адрес раннера:"
+          curl -s --max-time 10 https://ifconfig.me || echo "не определить"
+
+      - name: Проверить источники новостей
+        run: node scripts/news-probe.mjs
