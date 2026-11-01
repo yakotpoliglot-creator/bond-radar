@@ -102,17 +102,9 @@ export default function NewsPage() {
     });
   }, [items, topic, q]);
 
-  /* Группировка по дням: лента плоским списком читается хуже. */
-  const groups = useMemo(() => {
-    const out = [];
-    for (const it of list) {
-      const day = dayStr(it.ts);
-      const last = out[out.length - 1];
-      if (last && last.day === day) last.items.push(it);
-      else out.push({ day, items: [it] });
-    }
-    return out;
-  }, [list]);
+  /* Группировка по дням перенесена ниже, к определению главного материала:
+     оттуда её надо строить уже без главной новости, иначе она повторяется
+     в списке второй раз. */
 
   if (loading) return <Loading text="Загружаем ленту новостей…" />;
   if (error) {
@@ -141,6 +133,28 @@ export default function NewsPage() {
      висит вчерашнее. Без пояснения это читается как «лента не обновилась»,
      поэтому говорим прямо. */
   const todayCount = items.filter(it => dayStr(it.ts) === 'Сегодня').length;
+
+  /* Главный материал — как на образце: самый свежий с картинкой и
+     выдержкой. Если такого нет, блока просто не будет: пустая плашка
+     с серым прямоугольником хуже, чем её отсутствие. Показываем только
+     когда выборка не отфильтрована — иначе «главное» не имело бы смысла. */
+  const featured = (topic === 'all' && !q.trim())
+    ? list.find(it => it.img && it.excerpt)
+    : null;
+
+  /* Из списка главную новость убираем: показывать её дважды подряд —
+     один раз крупно, второй раз строкой ниже — выглядит как сбой. */
+  const groups = (() => {
+    const out = [];
+    for (const it of list) {
+      if (featured && it === featured) continue;
+      const day = dayStr(it.ts);
+      const last = out[out.length - 1];
+      if (last && last.day === day) last.items.push(it);
+      else out.push({ day, items: [it] });
+    }
+    return out;
+  })();
 
   return (
     <div>
@@ -210,6 +224,79 @@ export default function NewsPage() {
         </Panel>
       )}
 
+      {/* Главный материал: самая свежая новость с картинкой и выдержкой.
+          Оформление — как на образце, но без выдумок: теги здесь наши
+          собственные (тема и источник), а не редакционные ярлыки. */}
+      {featured && (
+        <div style={{ marginBottom: 16 }}>
+          <Panel pad={false}>
+            <div style={{ position: 'relative', overflow: 'hidden' }}>
+              {featured.img && (
+                <img
+                  src={featured.img}
+                  alt=""
+                  loading="eager"
+                  style={{
+                    width: '100%', height: 260, objectFit: 'cover',
+                    display: 'block', background: 'var(--bg2)',
+                  }}
+                  onError={e => { e.currentTarget.style.display = 'none'; }}
+                />
+              )}
+              <div
+                style={{
+                  padding: '16px 18px',
+                  background: featured.img
+                    ? 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.72) 100%)'
+                    : 'var(--bg2)',
+                  marginTop: featured.img ? -72 : 0,
+                  position: 'relative',
+                  color: featured.img ? '#fff' : 'var(--text)',
+                }}
+              >
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <span className="tag" style={{ fontSize: 10 }}>{featured.topic}</span>
+                  <span className="tag" style={{ fontSize: 10 }}>{featured.src}</span>
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>
+                  {whenStr(featured.ts)} · источник — {featured.src}
+                </div>
+                <div style={{ fontSize: 21, fontWeight: 700, lineHeight: 1.25 }}>
+                  {featured.url ? (
+                    <a
+                      href={featured.url}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      style={{ color: 'inherit' }}
+                      title="Открыть первоисточник"
+                    >
+                      {featured.title}
+                    </a>
+                  ) : featured.title}
+                </div>
+                {featured.excerpt && (
+                  <div style={{ fontSize: 13.5, lineHeight: 1.55, marginTop: 8, opacity: 0.92 }}>
+                    {featured.excerpt}
+                  </div>
+                )}
+                {featured.url && (
+                  <div style={{ marginTop: 10, fontSize: 12 }}>
+                    <a
+                      href={featured.url}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      style={{ color: 'inherit', textDecoration: 'underline' }}
+                    >
+                      Источник: {featured.src} ↗
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Panel>
+        </div>
+      )}
+
       {groups.map(g => (
         <div key={g.day} style={{ marginBottom: 14 }}>
           <div
@@ -234,36 +321,55 @@ export default function NewsPage() {
                   <div className="mono c-3" style={{ fontSize: 11, minWidth: 84, flexShrink: 0 }}>
                     {whenStr(it.ts)}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.35 }}>
-                      {it.url ? (
-                        <a href={it.url} target="_blank" rel="noopener noreferrer nofollow" title="Открыть первоисточник">
-                          {it.title}
-                        </a>
-                      ) : (
-                        it.title
-                      )}
-                    </div>
-
-                    {/* У части лент (smart-lab) описание — это тот же
-                        заголовок. Показывать его второй раз незачем. */}
-                    {it.excerpt && it.excerpt.trim() !== it.title.trim() && (
-                      <div className="c-2" style={{ fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>
-                        {it.excerpt}
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 12 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.35 }}>
+                        {it.url ? (
+                          <a href={it.url} target="_blank" rel="noopener noreferrer nofollow" title="Открыть первоисточник">
+                            {it.title}
+                          </a>
+                        ) : (
+                          it.title
+                        )}
                       </div>
-                    )}
 
-                    <div className="c-3" style={{ fontSize: 11, marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <span>{it.src}</span>
-                      {it.ticker && <span className="tag b" style={{ fontSize: 10 }}>{it.ticker}</span>}
-                      {topic === 'all' && it.topic && it.topic !== 'рынок' && (
-                        <span className="tag" style={{ fontSize: 10 }}>{it.topic}</span>
+                      {/* У части лент (smart-lab) описание — это тот же
+                          заголовок. Показывать его второй раз незачем. */}
+                      {it.excerpt && it.excerpt.trim() !== it.title.trim() && (
+                        <div className="c-2" style={{ fontSize: 12.5, lineHeight: 1.5, marginTop: 4 }}>
+                          {it.excerpt}
+                        </div>
                       )}
-                      {it.alsoIn?.length ? <span>ещё писали: {it.alsoIn.join(', ')}</span> : null}
-                      {it.url && (
-                        <a href={it.url} target="_blank" rel="noopener noreferrer nofollow">источник ↗</a>
-                      )}
+
+                      <div className="c-3" style={{ fontSize: 11, marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span>{it.src}</span>
+                        {it.ticker && <span className="tag b" style={{ fontSize: 10 }}>{it.ticker}</span>}
+                        {topic === 'all' && it.topic && it.topic !== 'рынок' && (
+                          <span className="tag" style={{ fontSize: 10 }}>{it.topic}</span>
+                        )}
+                        {it.alsoIn?.length ? <span>ещё писали: {it.alsoIn.join(', ')}</span> : null}
+                        {it.url && (
+                          <a href={it.url} target="_blank" rel="noopener noreferrer nofollow">источник ↗</a>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Миниатюра. Картинки дают Ведомости и Коммерсантъ;
+                        у остальных её нет — тогда строка просто без неё,
+                        серую заглушку не рисуем. */}
+                    {it.img && (
+                      <img
+                        src={it.img}
+                        alt=""
+                        loading="lazy"
+                        style={{
+                          width: 128, height: 78, objectFit: 'cover',
+                          borderRadius: 6, flexShrink: 0, background: 'var(--bg2)',
+                          alignSelf: 'flex-start',
+                        }}
+                        onError={e => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    )}
                   </div>
                 </div>
               </article>

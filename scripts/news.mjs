@@ -279,6 +279,15 @@ function parseRss(xml, { srcName, host, topic, isGoogle }) {
     const raw = tag(b, 'description') || tag(b, 'summary') || tag(b, 'content');
     const date = tag(b, 'pubDate') || tag(b, 'published') || tag(b, 'updated') || tag(b, 'dc:date');
 
+    /* Картинка новости. Ведомости кладут её в enclosure (187 записей из
+       200), Коммерсантъ — вчетверо реже, smart-lab не даёт вовсе. Берём
+       только https и только с известных доменов изданий: ссылку из чужой
+       ленты нельзя вставлять в нашу страницу вслепую. */
+    const img = b.match(/<enclosure[^>]*url="([^"]+)"/i)?.[1]
+      || b.match(/<media:content[^>]*url="([^"]+)"/i)?.[1]
+      || b.match(/<img[^>]*src="([^"]+)"/i)?.[1]
+      || '';
+
     /* Описание у Google — это тот же заголовок со ссылкой, выдержки там
        нет: не выдаём её за выдержку. */
     const cleanExcerpt = isGoogle ? '' : excerpt(raw);
@@ -292,6 +301,7 @@ function parseRss(xml, { srcName, host, topic, isGoogle }) {
       host: isGoogle ? hostOf(sourceUrl) : (host || ''),
       topic: topicOf(title, raw, topic),
       search: !!isGoogle,
+      img: safeImage(img),
     });
   }
   return out;
@@ -299,6 +309,24 @@ function parseRss(xml, { srcName, host, topic, isGoogle }) {
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+/* Картинка допускается, только если она https и лежит на домене издания,
+   которое мы читаем. Правило простое и проверяемое: чужая ссылка из ленты
+   не должна попадать на нашу страницу, даже если издание её туда положило.
+   Не подошла — новость выйдет без картинки, а не с чужой. */
+const IMG_HOSTS = [
+  'vedomosti.ru', 'cdn5.vedomosti.ru', 'cdn.vedomosti.ru',
+  'kommersant.ru', 'im2.kommersant.ru', 'im.kommersant.ru',
+  'smart-lab.ru', 'moex.com', 'www.moex.com',
+];
+
+function safeImage(url) {
+  if (!url) return '';
+  const clean = strip(String(url));
+  if (!/^https:\/\//i.test(clean)) return '';
+  const h = hostOf(clean);
+  return IMG_HOSTS.some(allowed => h === allowed || h.endsWith('.' + allowed)) ? clean : '';
 }
 
 /** Лента биржи — единственный источник, который прямо называет бумагу. */
