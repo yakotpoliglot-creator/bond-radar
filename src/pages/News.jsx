@@ -136,6 +136,12 @@ export default function NewsPage() {
   const stats = data?.stats || {};
   const updated = data?.generatedAt ? new Date(data.generatedAt) : null;
 
+  /* Сколько записей за сегодня. В выходные и праздники биржа не торгуется,
+     эмитенты не публикуют отчётность, ЦБ не заседает — и в ленте честно
+     висит вчерашнее. Без пояснения это читается как «лента не обновилась»,
+     поэтому говорим прямо. */
+  const todayCount = items.filter(it => dayStr(it.ts) === 'Сегодня').length;
+
   return (
     <div>
       <div className="page-h">
@@ -144,6 +150,17 @@ export default function NewsPage() {
           Что происходит на рынке облигаций: ставка, ОФЗ, размещения, рейтинги и дефолты
         </div>
       </div>
+
+      {todayCount === 0 && items.length > 0 && (
+        <Panel>
+          <div style={{ fontSize: 12.5, lineHeight: 1.6, color: 'var(--text2)' }}>
+            <b>За сегодня новых записей нет — и это не сбой.</b> Робот собирает ленту
+            каждые три часа, но в выходные и праздники биржа не торгуется, эмитенты не
+            публикуют отчётность, а ЦБ не заседает по ставке. Самая свежая запись в
+            ленте — {items[0]?.ts ? whenStr(items[0].ts) : ''}.
+          </div>
+        </Panel>
+      )}
 
       <Panel>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
