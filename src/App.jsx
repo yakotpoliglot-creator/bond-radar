@@ -15,6 +15,7 @@ import Portfolio from './pages/Portfolio';
 import Favorites from './pages/Favorites';
 import CalendarPage from './pages/Calendar';
 import Placements from './pages/Placements';
+import NewsPage from './pages/News';
 import Risk from './pages/Risk';
 
 export default function App() {
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/placements" element={<Placements />} />
+          <Route path="/news" element={<NewsPage />} />
           <Route path="/risk" element={<Risk />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
