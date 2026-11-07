@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 import {
   fetchBonds,
-  fetchYieldCurve,
+  fetchYieldCurveComparison,
   fetchIndexHistory,
   fetchIndexValues,
   fetchStocks,
@@ -14,7 +14,7 @@ import {
 import { Kpi, Panel, Loading, ErrorBox, BondTable } from '../components/ui';
 import { IndexCard, RatesNow, TopByYtm } from '../components/market';
 import MarketMap from '../components/MarketMap';
-import { nf, dateShort, chgStrA, chgClass } from '../lib/format';
+import { nf, dateShort, chgStrA, chgPill, chgClass } from '../lib/format';
 
 /* ── Бегущая строка рынка ──────────────────────────────────────────
    Приём с bondradar.pro, повторённый по ИХ КОДУ (app-main.js), а не по
@@ -351,6 +351,26 @@ function palette() {
   };
 }
 
+/* Цвет с прозрачностью — для заливки под кривой. Понимает #rgb и #rrggbb:
+   из темы приходят только они. Не разобрали — вернём цвет как есть, линия
+   останется видимой, просто без градиента. */
+function withAlpha(color, a) {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color).trim());
+  if (!m) return color;
+  let hex = m[1];
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+  const n = parseInt(hex, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+/* «2026-11-06» → «06.11»: для подписей на графике год лишний, он один и
+   тот же у всех трёх кривых. */
+function dayMonth(d) {
+  if (!d || d === '0000-00-00') return '';
+  const [, m, day] = String(d).split('-');
+  return m && day ? `${day}.${m}` : '';
+}
+
 /* Название активной темы; перерисовывает графики при переключении. */
 function useThemeName() {
   const [theme, setTheme] = useState(
@@ -459,6 +479,10 @@ export default function Home() {
   const [fatal, setFatal] = useState(null);
   const [bonds, setBonds] = useState(null);
   const [curve, setCurve] = useState(null);
+  /* Кривая на три даты: сейчас, неделю и месяц назад. Нужна для сравнения
+     на графике — как на образце. Отдельно от `curve`, потому что остальные
+     блоки (карта рынка, «где сейчас доходность») работают с одной кривой. */
+  const [curveCmp, setCurveCmp] = useState(null);
   const [rgbi, setRgbi] = useState(null);
   const [corp, setCorp] = useState(null);
   const [rates, setRates] = useState(null);
@@ -475,7 +499,7 @@ export default function Home() {
     setFatal(null);
 
     const [c, r, ci, b, rt, st, fxr] = await Promise.all([
-      fetchYieldCurve().catch(() => null),
+      fetchYieldCurveComparison().catch(() => null),
       fetchIndexHistory('RGBI').catch(() => null),
       loadCorpIndex().catch(() => null),
       fetchBonds().catch(() => null),
@@ -486,7 +510,8 @@ export default function Home() {
       fetchTickerCurrencies().catch(() => null),
     ]);
 
-    setCurve(c && c.length ? c : null);
+    setCurve(c?.current?.points?.length ? c.current.points : null);
+    setCurveCmp(c);
     setRgbi(r && r.length ? r : null);
     setCorp(ci);
     setBonds(b && b.length ? b : null);
@@ -496,7 +521,7 @@ export default function Home() {
 
     // Фатально, только если не пришло вообще ничего — иначе показываем
     // рабочие блоки, а упавшие панели помечаем как недоступные.
-    if (!c?.length && !r?.length && !b?.length && !ci) {
+    if (!c?.current?.points?.length && !r?.length && !b?.length && !ci) {
       setFatal('Московская биржа не ответила ни на один запрос. Проверьте соединение.');
     }
     setLoading(false);
@@ -512,6 +537,14 @@ export default function Home() {
     : null;
 
   const corpLast = corp && corp.rows.length ? corp.rows[corp.rows.length - 1] : null;
+
+  /* Окно графика RGBI и изменение за него — для подписи в шапке панели.
+     Ровно те же 120 дней, что нарисованы, иначе подпись обещала бы не то,
+     что видно на графике. */
+  const rgbiWindow = rgbi ? rgbi.slice(-120) : null;
+  const rgbiWindowChange = rgbiWindow && rgbiWindow.length > 1 && rgbiWindow[0].close
+    ? ((rgbiWindow[rgbiWindow.length - 1].close - rgbiWindow[0].close) / rgbiWindow[0].close) * 100
+    : null;
 
   const keyRateDate = KEY_RATE_HISTORY[KEY_RATE_HISTORY.length - 1][0];
 
@@ -558,51 +591,100 @@ export default function Home() {
     return out;
   }, [bonds]);
 
-  /* ═══════════════ График 1: кривая доходности ОФЗ ════════════════ */
+  /* ═══════════════ График 1: кривая доходности ОФЗ ════════════════ *
+   * Три кривые на одном поле — как на образце: последний торговый день,
+   * неделю и месяц назад. Так видно не «сколько сейчас», а куда кривая
+   * сдвинулась: подъём на дальнем конце означает, что рынок закладывает
+   * более высокие ставки надолго.
+   *
+   * Почему линии разного вида, а не три цвета: цветов в теме всего
+   * несколько, и три насыщенных линии на одном поле читаются плохо.
+   * Основная — сплошная с заливкой, прошлые — штриховая и пунктирная.
+   */
   useEffect(() => {
     const canvas = curveCanvas.current;
     if (!canvas || !curve) return;
 
     const p = palette();
     const opts = baseOptions(p, { yTitle: 'Доходность, %', xTitle: 'Срок, лет' });
+    /* Легенду рисуем сами в разметке: у Chart.js подписи мелкие и не
+       переносятся, а даты в них нужны (06.11 · 30.10 · 08.10). */
     opts.plugins.legend.display = false;
+    opts.interaction = { mode: 'index', intersect: false, axis: 'x' };
     opts.plugins.tooltip.callbacks = {
-      title: items => `${nf(items[0].parsed.x, 2)} лет`,
-      label: ctx => `Доходность: ${nf(ctx.parsed.y, 2)}%`,
+      title: items => `Срок: ${nf(items[0].parsed.x, 1)} года`,
+      label: ctx => `${ctx.dataset.label}: ${nf(ctx.parsed.y, 2)}%`,
     };
-    opts.scales.x.ticks.callback = v => `${v}`;
+    /* Линия ключевой ставки — ориентир, а не кривая: в подсказке сравнения
+       она только мешает, поэтому в список строк не попадает. */
+    opts.plugins.tooltip.filter = item => !item.dataset.isRate;
+    /* Подписи по оси X — только «круглые» сроки: 0,25 и 0,75 года
+       человеку ничего не говорят, а место занимают. */
+    const YEAR_TICKS = { 1: '1 год', 3: '3 года', 5: '5 лет', 7: '7 лет', 10: '10 лет', 15: '15 лет', 20: '20 лет', 30: '30 лет' };
+    opts.scales.x.ticks.callback = v => YEAR_TICKS[v] || '';
+    opts.scales.x.ticks.autoSkip = false;
+    opts.scales.x.ticks.maxRotation = 0;
+    /* Четыре подписи по доходности вместо десяти: сетка из десятка
+       горизонталей спорит с самими кривыми. */
+    opts.scales.y.ticks.maxTicksLimit = 5;
+    opts.scales.y.ticks.callback = v => nf(v, 1);
 
+    const series = [
+      { key: 'current', label: 'последний торг. день', color: p.green, dash: [], width: 2.2, fill: true, radius: 2.5 },
+      { key: 'week', label: 'неделю назад', color: p.blue, dash: [6, 4], width: 1.6, fill: false, radius: 0 },
+      { key: 'month', label: 'месяц назад', color: p.text3, dash: [2, 3], width: 1.5, fill: false, radius: 0 },
+    ];
+
+    const datasets = [];
+    for (const s of series) {
+      const src = s.key === 'current' ? curveCmp?.current : curveCmp?.[s.key];
+      const points = s.key === 'current' ? curve : src?.points;
+      if (!points?.length) continue;
+      datasets.push({
+        label: s.label,
+        data: points.map(d => ({ x: d.period, y: d.value })),
+        borderColor: s.color,
+        borderWidth: s.width,
+        borderDash: s.dash,
+        pointRadius: s.radius,
+        pointHoverRadius: 4,
+        tension: 0.25,
+        fill: s.fill ? 'origin' : false,
+        /* Заливка под текущей кривой — от цвета линии к прозрачному.
+           Градиент считается по области графика, поэтому задаём функцией:
+           до первой отрисовки области ещё нет. */
+        backgroundColor: s.fill
+          ? (ctx) => {
+            const { chart } = ctx;
+            const area = chart.chartArea;
+            if (!area) return withAlpha(s.color, 0.16);
+            const g = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+            g.addColorStop(0, withAlpha(s.color, 0.28));
+            g.addColorStop(1, withAlpha(s.color, 0));
+            return g;
+          }
+          : 'transparent',
+      });
+    }
+
+    // Порог ключевой ставки — горизонтальная штриховая линия.
     const values = curve.map(d => d.value);
     const lo = Math.min(...values);
     const hi = Math.max(...values);
     const showKeyRate = liveRate >= lo - 2 && liveRate <= hi + 2;
-
-    const datasets = [{
-      label: 'Кривая ОФЗ',
-      data: curve.map(d => ({ x: d.period, y: d.value })),
-      borderColor: p.blue,
-      backgroundColor: p.blue,
-      borderWidth: 2,
-      pointRadius: 3,
-      pointHoverRadius: 5,
-      tension: 0.25,
-      fill: false,
-    }];
-
-    // Порог ключевой ставки — горизонтальная штриховая линия.
     if (showKeyRate) {
       const xs = curve.map(d => d.period);
       datasets.push({
         label: `Ключевая ставка ${nf(liveRate, 2)}%`,
         data: [{ x: Math.min(...xs), y: liveRate }, { x: Math.max(...xs), y: liveRate }],
         borderColor: p.red,
-        borderWidth: 1.5,
+        borderWidth: 1.3,
         borderDash: [6, 4],
         pointRadius: 0,
         pointHitRadius: 0,
         fill: false,
+        isRate: true,
       });
-      opts.plugins.legend.display = true;
     }
 
     const chart = new Chart(canvas.getContext('2d'), {
@@ -612,7 +694,7 @@ export default function Home() {
     });
 
     return () => chart.destroy();
-  }, [curve, theme]);
+  }, [curve, curveCmp, liveRate, theme]);
 
   /* ═══════════════ График 2: индекс RGBI ═════════════════════════ */
   useEffect(() => {
@@ -651,6 +733,14 @@ export default function Home() {
       },
     };
     opts.scales.y.ticks.callback = v => nf(v, 0);
+    opts.scales.y.ticks.maxTicksLimit = 5;
+
+    /* Цвет линии — по направлению за показанное окно: растущий индекс
+       зелёный, падающий красный. Так график читается без разглядывания
+       первого и последнего значения. */
+    const first = rows[0]?.close;
+    const last = rows[rows.length - 1]?.close;
+    const color = first != null && last != null && last < first ? p.red : p.green;
 
     const chart = new Chart(canvas.getContext('2d'), {
       type: 'line',
@@ -659,14 +749,23 @@ export default function Home() {
         datasets: [{
           label: 'RGBI',
           data: rows.map(r => r.close),
-          borderColor: p.green,
-          backgroundColor: 'transparent',
+          borderColor: color,
+          /* Заливка от линии к низу — как на образце. Функцией, потому что
+             область графика известна только после первой отрисовки. */
+          backgroundColor: (ctx) => {
+            const area = ctx.chart.chartArea;
+            if (!area) return withAlpha(color, 0.14);
+            const g = ctx.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+            g.addColorStop(0, withAlpha(color, 0.26));
+            g.addColorStop(1, withAlpha(color, 0));
+            return g;
+          },
           borderWidth: 2,
           pointRadius: 0,
           pointHoverRadius: 4,
           tension: 0.2,
           spanGaps: true,
-          fill: false,
+          fill: 'origin',
         }],
       },
       options: opts,
@@ -797,16 +896,55 @@ export default function Home() {
       <div style={chartGrid}>
         <Panel
           title="Кривая доходности ОФЗ"
-          right={<span className="c-3" style={{ fontSize: 10.5 }}>срок в годах → доходность, %</span>}
+          right={
+            <span className="c-3" style={{ fontSize: 10.5 }}>
+              {curveCmp?.current?.date ? `данные на ${dayMonth(curveCmp.current.date)} · последний торг. день` : 'данные биржи'}
+            </span>
+          }
         >
           {curve
-            ? <ChartBox height={250}><canvas ref={curveCanvas} /></ChartBox>
+            ? (
+              <>
+                {/* Легенда своя, а не встроенная в Chart.js: нужны даты и
+                    разный вид линий (сплошная / штриховая / пунктирная). */}
+                <div className="curve-legend">
+                  <span className="curve-li">
+                    <i style={{ borderColor: 'var(--green)' }} />
+                    последний торг. день{curveCmp?.current?.date ? ` · ${dayMonth(curveCmp.current.date)}` : ''}
+                  </span>
+                  {curveCmp?.week?.points?.length ? (
+                    <span className="curve-li">
+                      <i className="dash" style={{ borderColor: 'var(--blue)' }} />
+                      неделю назад · {dayMonth(curveCmp.week.date)}
+                    </span>
+                  ) : null}
+                  {curveCmp?.month?.points?.length ? (
+                    <span className="curve-li">
+                      <i className="dot" style={{ borderColor: 'var(--text3)' }} />
+                      месяц назад · {dayMonth(curveCmp.month.date)}
+                    </span>
+                  ) : null}
+                </div>
+                <ChartBox height={250}><canvas ref={curveCanvas} /></ChartBox>
+              </>
+            )
             : <div className="empty">Кривая доходности недоступна</div>}
         </Panel>
 
         <Panel
           title="Индекс гособлигаций RGBI"
-          right={<span className="c-3" style={{ fontSize: 10.5 }}>последние {rgbi ? Math.min(rgbi.length, 120) : 0} дней</span>}
+          right={
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="c-3" style={{ fontSize: 10.5 }}>
+                последние {rgbiWindow ? rgbiWindow.length : 0} дней
+              </span>
+              {rgbiWindowChange != null && (
+                <span className={chgPill(rgbiWindowChange)} title="Изменение за показанный период">
+                  {chgStrA(rgbiWindowChange)}
+                </span>
+              )}
+            </span>
+          }
         >
           {rgbi
             ? <ChartBox height={250}><canvas ref={rgbiCanvas} /></ChartBox>

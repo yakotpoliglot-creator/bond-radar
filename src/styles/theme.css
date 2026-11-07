@@ -884,6 +884,90 @@ html[data-theme="dark"] .tk-item { border-right-color: #2b2f28; }
   box-shadow: 0 1px 4px rgba(0, 0, 0, .14);
 }
 
+/* ═══════════ Главная: сравнение кривой и полосы доходности ═══════════
+ * Появилось, когда главную привели к виду образца: на кривой ОФЗ теперь три
+ * даты (последний торг. день, неделю и месяц назад), а в «где сейчас
+ * доходность» вместо столбца цифр — полосы. Классы с префиксами, чтобы не
+ * задеть остальные страницы: .curve-li / .rate-* / .spark-* больше нигде не
+ * встречаются. */
+
+/* ── Легенда сравнения: образец линии, как на самом графике ───────── */
+.curve-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 16px;
+  margin: 0 0 8px;
+  font-size: 10.5px;
+  color: var(--text2);
+}
+.curve-li { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+/* Цвет приходит из разметки (border-color), вид линии — отсюда: сплошная,
+   штриховая и пунктирная ровно те же, что у кривых на графике. */
+.curve-li i {
+  display: inline-block;
+  width: 19px;
+  height: 0;
+  border-top: 2.5px solid var(--green);
+  border-radius: 2px;
+}
+.curve-li i.dash { border-top-style: dashed; }
+.curve-li i.dot { border-top-style: dotted; border-top-width: 3px; }
+
+/* ── Полосы «где сейчас доходность» ──────────────────────────────── */
+.rate-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 15px;
+}
+.rate-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.rate-label { font-size: 12.5px; color: var(--text); }
+.rate-val {
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rate-track {
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--bg2);
+  overflow: hidden;
+}
+.rate-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--trans);
+}
+/* Цвет — только для различия групп, не оценка надёжности: ставки серые,
+   ОФЗ зелёные, корпораты синие, ВДО янтарные. Та же логика, что в легенде
+   доходности ниже на странице. */
+.rate-fill.t-rate { background: var(--text3); }
+.rate-fill.t-ofz { background: var(--green); }
+.rate-fill.t-corp { background: var(--blue); }
+.rate-fill.t-vdo { background: var(--amber); }
+
+/* ── Искровой график индекса ─────────────────────────────────────── */
+.spark-plot { position: relative; }
+.spark-dot {
+  position: absolute;
+  right: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
+}
+.spark-ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text3);
+}
+
 /* ═══════════════ Крупнее: для тех, кому обычного размера мало ═══════════════
  * Кнопка «Крупнее» в подвале бокового меню (заказчик смотрит сайт в очках).
  * Увеличиваем не «корень» и не через zoom: размеры заданы в пикселях, а zoom

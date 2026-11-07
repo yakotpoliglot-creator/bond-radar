@@ -1174,6 +1174,79 @@ export async function fetchYieldCurve() {
   return years;
 }
 
+/* ── кривая доходности на прошлые даты ─────────────────────────────── *
+ *
+ * Нужна для «сравнения с прошлой неделей», как на образце. Это не
+ * украшение: ISS действительно отдаёт ZCYC на конкретный день параметром
+ * ?date=ГГГГ-ММ-ДД. Проверено вживую (доходность 10 лет):
+ *   текущая кривая     16.7538
+ *   на 30.10 (неделя)  16.5553
+ *   на 23.10           16.6350
+ *   на 08.10 (месяц)   16.8214
+ * Значения разные, значит биржа отдаёт историю, а не текущую кривую под
+ * другим заголовком.
+ *
+ * ГЛАВНАЯ ТОНКОСТЬ (проверена 07.11.2026, суббота): на выходной и праздник
+ * ?date= отдаёт ПУСТОЙ yearyields — ноль строк, без ошибки. Биржа НЕ
+ * подставляет последний торговый день. При этом tradedate в ответе просто
+ * повторяет запрошенную дату, поэтому по нему нельзя понять, что день был
+ * неторговым. Отсюда поведение: отступаем на день назад, пока кривая не
+ * появится, и подписываем её датой найденного торгового дня. Иначе на
+ * графике по субботам была бы пустая панель, а «неделю назад» в воскресенье
+ * показывало бы воскресенье, которого в торговле не было.
+ */
+export async function fetchYieldCurveAt(daysAgo = 0, { maxBack = 5 } = {}) {
+  let empty = null;
+  for (let back = 0; back <= maxBack; back++) {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo - back);
+    /* Дата в местной зоне: toISOString() считает по UTC, и в Москве после
+       полуночи он вернул бы вчерашний день. */
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const res = await iss('/engines/stock/zcyc.json', { date: iso });
+    const rows = zcycRows(res.yearyields);
+    if (!rows.length) { empty = iso; continue; }
+
+    const points = rows
+      .map(r => ({ period: +r.period, value: r.value != null ? +r.value : null }))
+      .filter(r => Number.isFinite(r.period) && r.value != null)
+      .sort((a, b) => a.period - b.period);
+
+    return { date: iso, points, asked: iso, daysBack: back, rows: rows.length };
+  }
+  /* Пять дней не помогли — значит данных нет, и рисовать нечего. Возвращаем
+     пустую кривую: панель честно скажет, что кривая недоступна. */
+  return { date: null, points: [], asked: empty, daysBack: null };
+}
+
+/** Строки блока yearyields в одной форме.
+ *
+ *  Две формы — не теории ради: наш iss() ходит с iss.json=extended, где
+ *  строка блока уже объект с именами полей, а сырой запрос без этого
+ *  параметра отдаёт {columns, data}. Первая версия читала только
+ *  columns/data, и на живой странице кривая вышла пустой. */
+function zcycRows(block) {
+  if (Array.isArray(block)) return block;
+  if (block?.data) {
+    const cols = block.columns || [];
+    return block.data.map(r => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
+  }
+  return [];
+}
+
+/** Три кривые для сравнения: сейчас, неделю и месяц назад.
+ *  Падение одного запроса не роняет график целиком — тогда не будет одной
+ *  линии, а не всей панели. */
+export async function fetchYieldCurveComparison() {
+  const [current, week, month] = await Promise.all([
+    fetchYieldCurveAt(0).catch(() => null),
+    fetchYieldCurveAt(7).catch(() => null),
+    fetchYieldCurveAt(30).catch(() => null),
+  ]);
+  return { current, week, month };
+}
+
 /* ── индексы ─────────────────────────────────────────────────────── */
 
 /** История индекса (RGBI, MCFTR, IMOEX...). */

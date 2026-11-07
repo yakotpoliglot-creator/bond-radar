@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { fetchIndexHistory, curveAt, median, daysUntil } from '../api/moex';
 import { nf, chgStrA, chgPill, ytmTone } from '../lib/format';
 import { Panel } from './ui';
@@ -39,8 +39,13 @@ export function termLabel(days) {
   return Math.max(1, Math.round(days / 30.44)) + ' мес';
 }
 
-/* ── Искровой график без зависимостей ─────────────────────────────── */
-function Sparkline({ values, w = 280, h = 52, up }) {
+/* ── Искровой график без зависимостей ─────────────────────────────── *
+ * Как на образце: линия с заливкой, точкой на последнем значении и
+ * подписью краёв. Градиент задаём в SVG, а не картинкой, чтобы он
+ * пересчитывался при смене темы и ширины.
+ */
+function Sparkline({ values, w = 280, h = 64, up, left, right }) {
+  const gid = useId().replace(/:/g, '');
   const pts = values.filter(v => Number.isFinite(v));
   if (pts.length < 2) return <div className="c-3" style={{ fontSize: 11, height: h }}>нет истории</div>;
 
@@ -48,17 +53,39 @@ function Sparkline({ values, w = 280, h = 52, up }) {
   const max = Math.max(...pts);
   const span = max - min || 1;
   const step = w / (pts.length - 1);
-  const y = v => h - 4 - ((v - min) / span) * (h - 8);
+  /* Поля сверху и снизу, чтобы линия не липла к краям рамки. */
+  const y = v => h - 7 - ((v - min) / span) * (h - 16);
   const d = pts.map((v, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
   const area = `${d} L${w},${h} L0,${h} Z`;
   const color = up ? 'var(--green)' : 'var(--red)';
+  const lastY = y(pts[pts.length - 1]);
 
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none"
-      style={{ display: 'block', overflow: 'visible' }} aria-hidden="true">
-      <path d={area} fill={color} opacity="0.08" />
-      <path d={d} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" />
-    </svg>
+    <div className="spark">
+      {/* Точка последнего значения лежит поверх svg и в своём контейнере:
+          внутри svg с preserveAspectRatio="none" она растянулась бы в овал. */}
+      <div className="spark-plot">
+        <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none"
+          style={{ display: 'block' }} aria-hidden="true">
+          <defs>
+            <linearGradient id={`sg${gid}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.26" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path d={area} fill={`url(#sg${gid})`} />
+          <path d={d} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke" />
+        </svg>
+        <span className="spark-dot" style={{ background: color, top: `calc(${(lastY / h) * 100}% - 3.5px)` }} />
+      </div>
+      {(left || right) && (
+        <span className="spark-ends">
+          <span>{left}</span>
+          <span>{right}</span>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -98,7 +125,23 @@ function IndexCard({ secid, title, note, initialPeriod = '3M' }) {
   const up = stats?.periodPct != null ? stats.periodPct >= 0 : true;
 
   return (
-    <Panel title={title} right={<span className="c-3" style={{ fontSize: 11 }}>{secid}</span>}>
+    <Panel
+      title={title}
+      right={
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="c-3" style={{ fontSize: 10.5 }}>{secid}</span>
+          {/* Изменение за период — в шапке, как на образце: значение
+              меняется вместе с выбранным периодом, и рядом с ним это
+              читается сразу. */}
+          {stats && stats.periodPct != null && (
+            <span className={chgPill(stats.periodPct)}
+              title={'Изменение за ' + PERIODS.find(p => p.key === period)?.label.toLowerCase()}>
+              {chgStrA(stats.periodPct)} за {PERIODS.find(p => p.key === period)?.label.toLowerCase()}
+            </span>
+          )}
+        </span>
+      }
+    >
       {!stats ? (
         <div className="c-3" style={{ fontSize: 12, padding: '8px 0' }}>
           {failed ? 'Индекс недоступен — биржа не отдала историю.' : 'Загрузка графика…'}
@@ -106,13 +149,9 @@ function IndexCard({ secid, title, note, initialPeriod = '3M' }) {
       ) : (
         <>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap' }}>
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, fontWeight: 700 }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>
               {nf(stats.last, 2)}
             </span>
-            <span className={chgPill(stats.periodPct) + ' lg'} title={'Изменение за ' + PERIODS.find(p => p.key === period)?.label.toLowerCase()}>
-              {chgStrA(stats.periodPct)}
-            </span>
-            <span className="c-3" style={{ fontSize: 11 }}>за {PERIODS.find(p => p.key === period)?.label.toLowerCase()}</span>
             {stats.dayPct != null && (
               <span className="c-3" style={{ fontSize: 11 }}>
                 за день <span className={chgPill(stats.dayPct)}>{chgStrA(stats.dayPct)}</span>
@@ -120,7 +159,7 @@ function IndexCard({ secid, title, note, initialPeriod = '3M' }) {
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 4, margin: '9px 0 6px' }}>
+          <div style={{ display: 'flex', gap: 4, margin: '10px 0 8px' }}>
             {PERIODS.map(p => (
               <span key={p.key} className={'chip' + (period === p.key ? ' on' : '')}
                 style={{ padding: '2px 8px', fontSize: 10.5 }}
@@ -128,11 +167,12 @@ function IndexCard({ secid, title, note, initialPeriod = '3M' }) {
             ))}
           </div>
 
-          <Sparkline values={stats.values} up={up} />
-          <div className="c-3" style={{ fontSize: 10.5, display: 'flex', justifyContent: 'space-between' }}>
-            <span>{stats.date}</span>
-            {note ? <span>{note}</span> : null}
-          </div>
+          <Sparkline
+            values={stats.values}
+            up={up}
+            left={stats.date}
+            right={note}
+          />
         </>
       )}
     </Panel>
@@ -153,41 +193,51 @@ function RatesNow({ rates, curve, bonds }) {
 
     for (const r of RATE_ROWS) {
       const v = rates?.[r.secid]?.value;
-      list.push({ label: r.label, value: v, sub: r.note, live: true });
+      list.push({ label: r.label, value: v, sub: r.note, tone: 'rate' });
     }
 
     [1, 5, 10].forEach(y => {
       const v = curveAt(curve, y);
-      list.push({ label: `ОФЗ ${y} ${y === 1 ? 'год' : 'лет'}`, value: v, sub: 'из кривой доходности' });
+      list.push({ label: `ОФЗ ${y} ${y === 1 ? 'год' : 'лет'}`, value: v, sub: 'из кривой доходности', tone: 'ofz' });
     });
 
     /* Корпораты первого уровня листинга — биржевой аналог «надёжных» */
     if (bonds?.length) {
       const safe = bonds.filter(b => !b.isOfz && !b.isSubfederal && b.listLevel === 1 && b.ytm != null);
       const vdo = bonds.filter(b => !b.isOfz && !b.isSubfederal && b.listLevel === 3 && b.ytm != null && b.ytm >= 20);
-      list.push({ label: 'Корпораты 1 уровня', value: median(safe.map(b => b.ytm)), sub: `медиана по ${safe.length} вып.` });
-      list.push({ label: 'ВДО (медиана)', value: median(vdo.map(b => b.ytm)), sub: `медиана по ${vdo.length} вып.` });
+      list.push({ label: 'Корпораты 1 уровня', value: median(safe.map(b => b.ytm)), sub: `медиана по ${safe.length} вып.`, tone: 'corp' });
+      list.push({ label: 'ВДО (медиана)', value: median(vdo.map(b => b.ytm)), sub: `медиана по ${vdo.length} вып.`, tone: 'vdo' });
     }
 
     return list;
   }, [rates, curve, bonds]);
 
+  /* Длину полосы считаем от самого большого значения в списке, а не от
+     100 %: все доходности лежат в узком коридоре 13–26 %, и на шкале до
+     100 % полосы были бы неразличимы. Общая шкала при этом сохраняется —
+     именно она и позволяет сравнивать строки между собой. */
+  const top = Math.max(...rows.map(r => (Number.isFinite(r.value) ? r.value : 0)), 1);
+
   return (
     <Panel title="Где сейчас доходность" pad={false}>
-      <table className="tbl">
-        <tbody>
-          {rows.map(r => (
-            <tr key={r.label} style={{ cursor: 'default' }}>
-              <td style={{ paddingLeft: 14 }}>{r.label}</td>
-              <td className="c-3" style={{ fontSize: 10.5 }}>{r.sub}</td>
-              <td className="mono" style={{ textAlign: 'right', fontWeight: 600, paddingRight: 14, whiteSpace: 'nowrap' }}>
-                {r.value == null ? '—' : nf(r.value, 2) + '%'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="rate-bars">
+        {rows.map(r => {
+          const pct = Number.isFinite(r.value) ? Math.max(1.5, (r.value / top) * 100) : 0;
+          return (
+            <div className="rate-row" key={r.label}>
+              <div className="rate-head">
+                <span className="rate-label">{r.label}</span>
+                <span className="rate-val mono">{r.value == null ? '—' : nf(r.value, 2) + '%'}</span>
+              </div>
+              <div className="rate-track" title={r.sub}>
+                <div className={'rate-fill t-' + r.tone} style={{ width: pct + '%' }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
       <div className="c-3" style={{ fontSize: 10.5, padding: '9px 14px', borderTop: '1px solid var(--border)', lineHeight: 1.6 }}>
+        Полоса — та же доходность, только длиной: так строки видно одна относительно другой.
         Ключевая ставка и RUSFAR — живые индексы Московской биржи. Ставки RUONIA и по вкладам
         не показаны: биржа их не публикует, а Банк России не отдаёт данные в браузер.
       </div>
