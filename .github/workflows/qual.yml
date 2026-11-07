@@ -54,26 +54,13 @@ jobs:
 
       # Данные коммитим даже при неполном прогоне: в файле есть coverage и
       # partial, сайт по ним честно говорит, сколько выпусков проверено.
+      # Коммит и пуш — общим скриптом на всех роботов: он повторяет пуш,
+      # переносит свой коммит поверх ветки и разрешает конфликт в файле
+      # данных. Прежняя копия этого цикла умирала на первой же неудаче пуша,
+      # а конфликт не разрешала вовсе. Разбор — в шапке
+      # scripts/commit-robot-data.sh.
       - name: Закоммитить изменения
         if: always()
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/qual.json .github/last-robot-run.txt
-          if git diff --staged --quiet; then
-            echo "Изменений нет — коммит не нужен."
-          else
-            git commit -m "Робот: допуск выпусков $(date -u +%Y-%m-%d)"
-            # Пуш может не пройти, если в ветку успел что-то положить другой
-            # робот или человек: git отвергает такой пуш целиком, и данные
-            # всего прогона теряются. Пробуем трижды, перебазируясь поверх
-            # того, что уже лежит в ветке.
-            for i in 1 2 3; do
-              if git push; then exit 0; fi
-              echo "Пуш не прошёл, попытка $i — перебазируемся"
-              git pull --rebase --autostash || git rebase --abort
-              sleep 5
-            done
-            echo "Не удалось запушить за три попытки"
-            exit 1
-          fi
+          bash scripts/commit-robot-data.sh "допуск выпусков $(date -u +%Y-%m-%d)" \
+            public/qual.json .github/last-robot-run.txt
